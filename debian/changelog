@@ -1,3 +1,25 @@
+php8.4 (8.4.10-1) unstable; urgency=medium
+
+  * Set PHP_BUILD_PROVIDER to Debian with option to override this from
+    shell environment
+  * New upstream version 8.4.10
+
+ -- Ondřej Surý <ondrej@debian.org>  Thu, 03 Jul 2025 14:35:27 +0200
+
+php8.4 (8.4.8-1) unstable; urgency=medium
+
+  * Move setting ICU_CXXFLAGS to the right place in d/rules
+  * Use ICU >= 75 version to determine the need for C++11 or C++17
+  * New upstream version 8.4.8
+
+ -- Ondřej Surý <ondrej@debian.org>  Sat, 07 Jun 2025 16:22:04 +0200
+
+php8.4 (8.4.7-1) unstable; urgency=medium
+
+  * New upstream version 8.4.7
+
+ -- Ondřej Surý <ondrej@debian.org>  Fri, 09 May 2025 08:06:27 +0200
+
 php8.4 (8.4.6-2) unstable; urgency=medium
 
   * Remove libxmltok1-dev from Build-Depends (Closes: #871826)

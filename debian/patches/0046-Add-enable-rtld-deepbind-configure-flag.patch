@@ -21,7 +21,7 @@ index e419540..44d4daf 100644
  # else
  #  define DL_LOAD(libname)			dlopen(libname, PHP_RTLD_MODE | RTLD_GLOBAL)
 diff --git a/configure.ac b/configure.ac
-index 82f97d6a..ab85b07 100644
+index a55b95a..0b43326 100644
 --- a/configure.ac
 +++ b/configure.ac
 @@ -867,6 +867,23 @@ AS_VAR_IF([PHP_RTLD_NOW], [yes],

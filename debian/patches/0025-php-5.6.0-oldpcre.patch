@@ -8,7 +8,7 @@ Subject: php-5.6.0-oldpcre
  2 files changed, 3 insertions(+), 9 deletions(-)
 
 diff --git a/ext/pcre/tests/grep2.phpt b/ext/pcre/tests/grep2.phpt
-index 9721dfb..4c35ec3 100644
+index a953b13..c0e8ee2 100644
 --- a/ext/pcre/tests/grep2.phpt
 +++ b/ext/pcre/tests/grep2.phpt
 @@ -36,12 +36,6 @@

@@ -386,7 +386,7 @@ too_few_args:
 		switch ((int) code) {
 			case 'h':
 			case 'H':
-				INC_OUTPUTPOS((arg + (arg % 2)) / 2,1)	/* 4 bit per arg */
+				INC_OUTPUTPOS((arg / 2) + (arg % 2),1)	/* 4 bit per arg */
 				break;
 
 			case 'a':
@@ -875,6 +875,11 @@ PHP_FUNCTION(unpack)
 
 		/* Do actual unpacking */
 		for (i = 0; i != repetitions; i++ ) {
+
+			/* Each repetition costs a name and a value, so stop once over the limit. */
+			if (ZEND_HAS_OOM()) {
+				RETURN_OOM();
+			}
 
 			if (size != 0 && size != -1 && INT_MAX - size + 1 < inputpos) {
 				php_error_docref(NULL, E_WARNING, "Type %c: integer overflow", type);

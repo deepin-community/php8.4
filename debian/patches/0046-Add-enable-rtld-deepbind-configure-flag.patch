@@ -8,7 +8,7 @@ Subject: Add --enable-rtld-deepbind configure flag
  2 files changed, 18 insertions(+), 1 deletion(-)
 
 diff --git a/Zend/zend_portability.h b/Zend/zend_portability.h
-index e419540..44d4daf 100644
+index cd58387..0ea1ef7 100644
 --- a/Zend/zend_portability.h
 +++ b/Zend/zend_portability.h
 @@ -161,7 +161,7 @@
@@ -21,7 +21,7 @@ index e419540..44d4daf 100644
  # else
  #  define DL_LOAD(libname)			dlopen(libname, PHP_RTLD_MODE | RTLD_GLOBAL)
 diff --git a/configure.ac b/configure.ac
-index a55b95a..0b43326 100644
+index 1fbcbdc..ea072b5 100644
 --- a/configure.ac
 +++ b/configure.ac
 @@ -867,6 +867,23 @@ AS_VAR_IF([PHP_RTLD_NOW], [yes],

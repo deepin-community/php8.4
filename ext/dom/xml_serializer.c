@@ -10,7 +10,7 @@
    | obtain it through the world-wide-web, please send a note to          |
    | license@php.net so we can mail you a copy immediately.               |
    +----------------------------------------------------------------------+
-   | Authors: Niels Dossche <nielsdos@php.net>                            |
+   | Authors: Nora Dossche  <ndossche@php.net>                            |
    +----------------------------------------------------------------------+
 */
 
@@ -640,7 +640,11 @@ static int dom_xml_serialize_comment_node(xmlOutputBufferPtr out, xmlNodePtr com
 		const xmlChar *ptr = comment->content;
 		if (ptr != NULL) {
 			TRY(dom_xml_check_char_production(ptr));
-			if (strstr((const char *) ptr, "--") != NULL || ptr[strlen((const char *) ptr) - 1] == '-') {
+			if (strstr((const char *) ptr, "--") != NULL) {
+				return -1;
+			}
+			size_t len = strlen((const char *) ptr);
+			if (len > 0 && ptr[len - 1] == '-') {
 				return -1;
 			}
 		}
@@ -1093,7 +1097,10 @@ static int dom_xml_serialize_element_node(
 	/* 14. If ns is the HTML namespace, and the node's list of children is empty, and the node's localName matches
 	 *     any one of the following void elements: ... */
 	if (element->children == NULL) {
-		if (xmlSaveNoEmptyTags) {
+		ZEND_DIAGNOSTIC_IGNORED_START("-Wdeprecated-declarations")
+		int saveNoEmptyTags = xmlSaveNoEmptyTags;
+		ZEND_DIAGNOSTIC_IGNORED_END
+		if (saveNoEmptyTags) {
 			/* Do nothing, use the <x></x> closing style. */
 		} else if (php_dom_ns_is_fast(element, php_dom_ns_is_html_magic_token)) {
 			size_t name_length = strlen((const char *) element->name);
@@ -1243,6 +1250,15 @@ static int dom_xml_serializing_a_document_node(
 	return 0;
 }
 
+static zend_always_inline bool dom_xml_serialize_check_stack_limit(void)
+{
+#ifdef ZEND_CHECK_STACK_LIMIT
+	return zend_call_stack_overflowed(EG(stack_limit));
+#else
+	return false;
+#endif
+}
+
 /* https://w3c.github.io/DOM-Parsing/#dfn-xml-serialization-algorithm */
 static int dom_xml_serialization_algorithm(
 	dom_xml_serialize_ctx *ctx,
@@ -1254,6 +1270,11 @@ static int dom_xml_serialization_algorithm(
 	bool require_well_formed
 )
 {
+	if (UNEXPECTED(dom_xml_serialize_check_stack_limit())) {
+		zend_throw_error(NULL, "Maximum call stack size reached. Infinite recursion?");
+		return -1;
+	}
+
 	/* If node's interface is: */
 	switch (node->type) {
 		case XML_ELEMENT_NODE:

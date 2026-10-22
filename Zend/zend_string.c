@@ -134,6 +134,18 @@ ZEND_API void zend_interned_strings_dtor(void)
 	zend_known_strings = NULL;
 }
 
+ZEND_API zend_string* ZEND_FASTCALL zend_string_finit_existing_interned(const char *str, size_t len, bool permanent, bool fallible)
+{
+	bool was_fallible = CG(interned_strings_fallible);
+	CG(interned_strings_fallible) = fallible;
+
+	zend_string *ret = zend_string_init_existing_interned(str, len, permanent);
+
+	CG(interned_strings_fallible) = was_fallible;
+
+	return ret;
+}
+
 static zend_always_inline zend_string *zend_interned_string_ht_lookup_ex(zend_ulong h, const char *str, size_t size, HashTable *interned_strings)
 {
 	uint32_t nIndex;
@@ -294,7 +306,10 @@ static zend_string* ZEND_FASTCALL zend_string_init_existing_interned_permanent(c
 	}
 
 	ZEND_ASSERT(permanent);
-	ret = zend_string_init(str, size, permanent);
+	ret = zend_string_finit(str, size, permanent, CG(interned_strings_fallible));
+	if (UNEXPECTED(!ret)) {
+		return NULL;
+	}
 	ZSTR_H(ret) = h;
 	return ret;
 }
@@ -343,7 +358,10 @@ static zend_string* ZEND_FASTCALL zend_string_init_existing_interned_request(con
 	}
 
 	ZEND_ASSERT(!permanent);
-	ret = zend_string_init(str, size, permanent);
+	ret = zend_string_finit(str, size, permanent, CG(interned_strings_fallible));
+	if (UNEXPECTED(!ret)) {
+		return NULL;
+	}
 	ZSTR_H(ret) = h;
 	return ret;
 }
@@ -505,8 +523,10 @@ ZEND_API zend_string *zend_string_concat3(
 	return res;
 }
 
-/* strlcpy and strlcat are not intercepted by msan, so we need to do it ourselves. */
-#if __has_feature(memory_sanitizer)
+/* strlcpy and strlcat are not always intercepted by msan, so we need to do it
+ * ourselves. Apply a simple heuristic to determine the platforms that need it.
+ * See https://github.com/php/php-src/issues/20002. */
+#if __has_feature(memory_sanitizer) && !defined(__FreeBSD__) && !defined(__NetBSD__) && !defined(__APPLE__)
 static size_t (*libc_strlcpy)(char *__restrict, const char *__restrict, size_t);
 size_t strlcpy(char *__restrict dest, const char *__restrict src, size_t n)
 {

@@ -564,6 +564,7 @@ static int _php_ldap_control_from_array(LDAP *ld, LDAPControl** ctrl, zval* arra
 
 			num_keys = zend_hash_num_elements(Z_ARRVAL_P(val));
 			sort_keys = safe_emalloc((num_keys+1), sizeof(LDAPSortKey*), 0);
+			memset(sort_keys, 0, (num_keys+1) * sizeof(LDAPSortKey*));
 			tmpstrings1 = safe_emalloc(num_keys, sizeof(zend_string*), 0);
 			tmpstrings2 = safe_emalloc(num_keys, sizeof(zend_string*), 0);
 			num_tmpstrings1 = 0;
@@ -663,14 +664,15 @@ static int _php_ldap_control_from_array(LDAP *ld, LDAPControl** ctrl, zval* arra
 				goto failure;
 			}
 
+			zend_string *context_str = NULL;
 			if ((tmp = zend_hash_str_find(Z_ARRVAL_P(val), "context", sizeof("context") - 1)) != NULL) {
-				tmpstring = zval_get_string(tmp);
+				context_str = zval_get_string(tmp);
 				if (EG(exception)) {
 					rc = -1;
 					goto failure;
 				}
-				context.bv_val = ZSTR_VAL(tmpstring);
-				context.bv_len = ZSTR_LEN(tmpstring);
+				context.bv_val = ZSTR_VAL(context_str);
+				context.bv_len = ZSTR_LEN(context_str);
 				vlvInfo.ldvlv_context = &context;
 			} else {
 				vlvInfo.ldvlv_context = NULL;
@@ -681,6 +683,9 @@ static int _php_ldap_control_from_array(LDAP *ld, LDAPControl** ctrl, zval* arra
 			rc = ldap_create_vlv_control_value(ld, &vlvInfo, &control_value);
 			if (rc != LDAP_SUCCESS) {
 				php_error_docref(NULL, E_WARNING, "Failed to create VLV control value: %s (%d)", ldap_err2string(rc), rc);
+			}
+			if (context_str) {
+				zend_string_release_ex(context_str, false);
 			}
 		} else {
 			zend_type_error("%s(): Control OID %s cannot be of type array", get_active_function_name(), ZSTR_VAL(control_oid));
@@ -3740,7 +3745,8 @@ PHP_FUNCTION(ldap_rename_ext)
  */
 static int _php_ldap_tls_newctx(LDAP *ld)
 {
-	int val = 0, i, opts[] = {
+	int val = 0, i;
+	int str_opts[] = {
 #if (LDAP_API_VERSION > 2000)
 		LDAP_OPT_X_TLS_CACERTDIR,
 		LDAP_OPT_X_TLS_CACERTFILE,
@@ -3760,20 +3766,41 @@ static int _php_ldap_tls_newctx(LDAP *ld)
 #endif
 	0};
 
-	for (i=0 ; opts[i] ; i++) {
+	for (i=0 ; str_opts[i] ; i++) {
 		char *path = NULL;
 
-		ldap_get_option(ld, opts[i], &path);
+		ldap_get_option(ld, str_opts[i], &path);
 		if (path) {			/* already set locally */
 			ldap_memfree(path);
 		} else {
-			ldap_get_option(NULL, opts[i], &path);
+			ldap_get_option(NULL, str_opts[i], &path);
 			if (path) { 	/* set globally, inherit */
-				ldap_set_option(ld, opts[i], path);
+				ldap_set_option(ld, str_opts[i], path);
 				ldap_memfree(path);
 			}
 		}
 	}
+
+#ifdef LDAP_OPT_X_TLS_PROTOCOL_MIN
+	int int_opts[] = {
+		LDAP_OPT_X_TLS_PROTOCOL_MIN,
+#ifdef LDAP_OPT_X_TLS_PROTOCOL_MAX
+		LDAP_OPT_X_TLS_PROTOCOL_MAX,
+#endif
+		0
+	};
+	for (i=0 ; int_opts[i] ; i++) {
+		int value = 0;
+
+		ldap_get_option(ld, int_opts[i], &value);
+		if (value <= 0) { 	/* if value is not set already */
+			ldap_get_option(NULL, int_opts[i], &value);
+			if (value > 0) { 	/* set globally, inherit */
+				ldap_set_option(ld, int_opts[i], &value);
+			}
+		}
+	}
+#endif
 
 	return ldap_set_option(ld, LDAP_OPT_X_TLS_NEWCTX, &val);
 }
@@ -4051,7 +4078,12 @@ static void php_ldap_exop(INTERNAL_FUNCTION_PARAMETERS, bool force_sync) {
 		}
 	}
 
-	if (zend_parse_parameters(ZEND_NUM_ARGS(), "OS|S!a!zz", &link, ldap_link_ce, &reqoid, &reqdata, &serverctrls, &retdata, &retoid) != SUCCESS) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "OP|S!a!zz", &link, ldap_link_ce, &reqoid, &reqdata, &serverctrls, &retdata, &retoid) != SUCCESS) {
+		RETURN_THROWS();
+	}
+
+	if (ZSTR_LEN(reqoid) == 0) {
+		zend_argument_must_not_be_empty_error(2);
 		RETURN_THROWS();
 	}
 

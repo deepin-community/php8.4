@@ -459,6 +459,7 @@ void init_compiler(void) /* {{{ */
 	CG(delayed_autoloads) = NULL;
 	CG(unlinked_uses) = NULL;
 	CG(current_linking_class) = NULL;
+	CG(interned_strings_fallible) = false;
 }
 /* }}} */
 
@@ -2023,12 +2024,12 @@ ZEND_API void zend_activate_auto_globals(void) /* {{{ */
 	zend_auto_global *auto_global;
 
 	ZEND_HASH_MAP_FOREACH_PTR(CG(auto_globals), auto_global) {
-		if (auto_global->jit) {
-			auto_global->armed = 1;
-		} else if (auto_global->auto_global_callback) {
+		auto_global->armed = auto_global->jit || auto_global->auto_global_callback;
+	} ZEND_HASH_FOREACH_END();
+
+	ZEND_HASH_MAP_FOREACH_PTR(CG(auto_globals), auto_global) {
+		if (auto_global->armed && !auto_global->jit) {
 			auto_global->armed = auto_global->auto_global_callback(auto_global->name);
-		} else {
-			auto_global->armed = 0;
 		}
 	} ZEND_HASH_FOREACH_END();
 }
@@ -2188,7 +2189,7 @@ ZEND_API size_t zend_dirname(char *path, size_t len)
 	/* Note that on Win32 CWD is per drive (heritage from CP/M).
 	 * This means dirname("c:foo") maps to "c:." or "c:" - which means CWD on C: drive.
 	 */
-	if ((2 <= len) && isalpha((int)((unsigned char *)path)[0]) && (':' == path[1])) {
+	if ((2 <= len) && isalpha((unsigned char)path[0]) && (':' == path[1])) {
 		/* Skip over the drive spec (if any) so as not to change */
 		path += 2;
 		len_adjust += 2;
@@ -5203,7 +5204,7 @@ static void zend_compile_call(znode *result, zend_ast *ast, uint32_t type) /* {{
 		}
 
 		zval_ptr_dtor(&name_node.u.constant);
-		ZVAL_NEW_STR(&name_node.u.constant, lcname);
+		ZVAL_STR(&name_node.u.constant, lcname);
 
 		opline = zend_emit_op(NULL, ZEND_INIT_FCALL, NULL, &name_node);
 		opline->result.num = zend_alloc_cache_slot();
@@ -5725,7 +5726,19 @@ static void zend_compile_return(zend_ast *ast) /* {{{ */
 			expr_ast ? &expr_node : NULL, CG(active_op_array)->arg_info - 1, 0);
 	}
 
+	uint32_t opnum_before_finally = get_next_op_number();
+
 	zend_handle_loops_and_finally((expr_node.op_type & (IS_TMP_VAR | IS_VAR)) ? &expr_node : NULL);
+
+	/* Content of reference might have changed in finally, repeat type check. */
+	if (by_ref
+	 /* Check if any opcodes were emitted since the last return type check. */
+	 && opnum_before_finally != get_next_op_number()
+	 && !is_generator
+	 && (CG(active_op_array)->fn_flags & ZEND_ACC_HAS_RETURN_TYPE)) {
+		zend_emit_return_type_check(
+			expr_ast ? &expr_node : NULL, CG(active_op_array)->arg_info - 1, 0);
+	}
 
 	opline = zend_emit_op(NULL, by_ref ? ZEND_RETURN_BY_REF : ZEND_RETURN,
 		&expr_node, NULL);
@@ -9554,7 +9567,11 @@ static void zend_compile_halt_compiler(zend_ast *ast) /* {{{ */
 	name = zend_mangle_property_name(const_name, sizeof(const_name) - 1,
 		ZSTR_VAL(filename), ZSTR_LEN(filename), 0);
 
-	zend_register_long_constant(ZSTR_VAL(name), ZSTR_LEN(name), offset, 0, 0);
+	/* Avoid repeated declaration of the __COMPILER_HALT_OFFSET__ constant in
+	 * case this file was already included. */
+	if (!zend_hash_find(EG(zend_constants), name)) {
+		zend_register_long_constant(ZSTR_VAL(name), ZSTR_LEN(name), offset, 0, 0);
+	}
 	zend_string_release_ex(name, 0);
 }
 /* }}} */

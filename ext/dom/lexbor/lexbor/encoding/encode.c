@@ -111,6 +111,122 @@
     return 1
 
 
+lxb_inline uint16_t
+lxb_encoding_multi_big5_index(lxb_codepoint_t cp)
+{
+    if (cp > 0x2F8A7) {
+        return UINT16_MAX;
+    }
+
+    if (cp < 65518) {
+        if (cp >= 167 && cp < 1106) {
+            return lxb_encoding_multi_big5_167_1106_map[cp - 167];
+        }
+        else if (cp >= 8211) {
+            if (cp < 40882) {
+                return lxb_encoding_multi_big5_8211_40882_map[cp - 8211];
+            }
+            else if (cp >= 64012) {
+                return lxb_encoding_multi_big5_64012_65518_map[cp - 64012];
+            }
+        }
+    }
+    else if (cp >= 131210) {
+        if (cp < 172369) {
+            return lxb_encoding_multi_big5_131210_172369_map[cp - 131210];
+        }
+        else if (cp >= 194708) {
+            if (cp < 194727) {
+                return lxb_encoding_multi_big5_194708_194727_map[cp - 194708];
+            }
+        }
+    }
+
+    return UINT16_MAX;
+}
+
+lxb_inline uint16_t
+lxb_encoding_multi_euc_kr_index(lxb_codepoint_t cp)
+{
+    if (cp > 0xFFE7) {
+        return UINT16_MAX;
+    }
+
+    if (cp < 13278) {
+        if (cp >= 161 && cp < 1106) {
+            return lxb_encoding_multi_euc_kr_161_1106_map[cp - 161];
+        }
+        else if (cp >= 8213) {
+            return lxb_encoding_multi_euc_kr_8213_13278_map[cp - 8213];
+        }
+    }
+    else if (cp >= 19968) {
+        if (cp < 55204) {
+            return lxb_encoding_multi_euc_kr_19968_55204_map[cp - 19968];
+        }
+        else if (cp >= 63744) {
+            if (cp < 65511) {
+                return lxb_encoding_multi_euc_kr_63744_65511_map[cp - 63744];
+            }
+        }
+    }
+
+    return UINT16_MAX;
+}
+
+lxb_inline uint16_t
+lxb_encoding_multi_gb18030_index(lxb_codepoint_t cp)
+{
+    if (cp > 0xFFE6) {
+        return UINT16_MAX;
+    }
+
+    if (cp < 40892) {
+        if (cp >= 164 && cp < 1106) {
+            return lxb_encoding_multi_gb18030_164_1106_map[cp - 164];
+        }
+        else if (cp >= 7743) {
+            return lxb_encoding_multi_gb18030_7743_40892_map[cp - 7743];
+        }
+    }
+    else if (cp >= 57344) {
+        if (cp < 65510) {
+            return lxb_encoding_multi_gb18030_57344_65510_map[cp - 57344];
+        }
+    }
+
+    return UINT16_MAX;
+}
+
+lxb_inline uint16_t
+lxb_encoding_multi_jis0208_index(lxb_codepoint_t cp)
+{
+    if (cp > 0xFFE6) {
+        return UINT16_MAX;
+    }
+
+    if (cp < 13262) {
+        if (cp >= 167 && cp < 1106) {
+            return lxb_encoding_multi_jis0208_167_1106_map[cp - 167];
+        }
+        else if (cp >= 8208) {
+            return lxb_encoding_multi_jis0208_8208_13262_map[cp - 8208];
+        }
+    }
+    else if (cp >= 19968) {
+        if (cp < 40865) {
+            return lxb_encoding_multi_jis0208_19968_40865_map[cp - 19968];
+        }
+        else if (cp >= 63785) {
+            if (cp < 65510) {
+                return lxb_encoding_multi_jis0208_63785_65510_map[cp - 63785];
+            }
+        }
+    }
+
+    return UINT16_MAX;
+}
+
 lxb_status_t
 lxb_encoding_encode_default(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **cps,
                             const lxb_codepoint_t *end)
@@ -138,8 +254,8 @@ lxb_status_t
 lxb_encoding_encode_big5(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **cps,
                          const lxb_codepoint_t *end)
 {
+    uint16_t index;
     lxb_codepoint_t cp;
-    const lexbor_shs_hash_t *hash;
 
     for (; *cps < end; (*cps)++) {
         cp = **cps;
@@ -149,9 +265,8 @@ lxb_encoding_encode_big5(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **cps
             continue;
         }
 
-        hash = lexbor_shs_hash_get_static(lxb_encoding_multi_hash_big5,
-                                          LXB_ENCODING_MULTI_HASH_BIG5_SIZE, cp);
-        if (hash == NULL) {
+        index = lxb_encoding_multi_big5_index(cp);
+        if (index == UINT16_MAX) {
             LXB_ENCODING_ENCODE_ERROR(ctx);
             continue;
         }
@@ -160,13 +275,13 @@ lxb_encoding_encode_big5(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **cps
             return LXB_STATUS_SMALL_BUFFER;
         }
 
-        ctx->buffer_out[ ctx->buffer_used++ ] = ((uint32_t) (uintptr_t) hash->value) / 157 + 0x81;
+        ctx->buffer_out[ ctx->buffer_used++ ] = index / 157 + 0x81;
 
-        if ((((uint32_t) (uintptr_t) hash->value) % 157) < 0x3F) {
-            ctx->buffer_out[ ctx->buffer_used++ ] = (((uint32_t) (uintptr_t) hash->value) % 157) + 0x40;
+        if ((index % 157) < 0x3F) {
+            ctx->buffer_out[ ctx->buffer_used++ ] = (index % 157) + 0x40;
         }
         else {
-            ctx->buffer_out[ ctx->buffer_used++ ] = (((uint32_t) (uintptr_t) hash->value) % 157) + 0x62;
+            ctx->buffer_out[ ctx->buffer_used++ ] = (index % 157) + 0x62;
         }
     }
 
@@ -177,8 +292,8 @@ lxb_status_t
 lxb_encoding_encode_euc_jp(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **cps,
                            const lxb_codepoint_t *end)
 {
+    uint16_t index;
     lxb_codepoint_t cp;
-    const lexbor_shs_hash_t *hash;
 
     for (; *cps < end; (*cps)++) {
         cp = **cps;
@@ -213,9 +328,8 @@ lxb_encoding_encode_euc_jp(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **c
             cp = 0xFF0D;
         }
 
-        hash = lexbor_shs_hash_get_static(lxb_encoding_multi_hash_jis0208,
-                                          LXB_ENCODING_MULTI_HASH_JIS0208_SIZE, cp);
-        if (hash == NULL) {
+        index = lxb_encoding_multi_jis0208_index(cp);
+        if (index == UINT16_MAX) {
             LXB_ENCODING_ENCODE_ERROR(ctx);
             continue;
         }
@@ -224,8 +338,8 @@ lxb_encoding_encode_euc_jp(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **c
             return LXB_STATUS_SMALL_BUFFER;
         }
 
-        ctx->buffer_out[ ctx->buffer_used++ ] = (uint32_t) (uintptr_t) hash->value / 94 + 0xA1;
-        ctx->buffer_out[ ctx->buffer_used++ ] = (uint32_t) (uintptr_t) hash->value % 94 + 0xA1;
+        ctx->buffer_out[ ctx->buffer_used++ ] = index / 94 + 0xA1;
+        ctx->buffer_out[ ctx->buffer_used++ ] = index % 94 + 0xA1;
     }
 
     return LXB_STATUS_OK;
@@ -235,8 +349,8 @@ lxb_status_t
 lxb_encoding_encode_euc_kr(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **cps,
                            const lxb_codepoint_t *end)
 {
+    uint16_t index;
     lxb_codepoint_t cp;
-    const lexbor_shs_hash_t *hash;
 
     for (; *cps < end; (*cps)++) {
         cp = **cps;
@@ -246,9 +360,8 @@ lxb_encoding_encode_euc_kr(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **c
             continue;
         }
 
-        hash = lexbor_shs_hash_get_static(lxb_encoding_multi_hash_euc_kr,
-                                          LXB_ENCODING_MULTI_HASH_EUC_KR_SIZE, cp);
-        if (hash == NULL) {
+        index = lxb_encoding_multi_euc_kr_index(cp);
+        if (index == UINT16_MAX) {
             LXB_ENCODING_ENCODE_ERROR(ctx);
             continue;
         }
@@ -257,8 +370,8 @@ lxb_encoding_encode_euc_kr(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **c
             return LXB_STATUS_SMALL_BUFFER;
         }
 
-        ctx->buffer_out[ ctx->buffer_used++ ] = (uint32_t) (uintptr_t) hash->value / 190 + 0x81;
-        ctx->buffer_out[ ctx->buffer_used++ ] = (uint32_t) (uintptr_t) hash->value % 190 + 0x41;
+        ctx->buffer_out[ ctx->buffer_used++ ] = index / 190 + 0x81;
+        ctx->buffer_out[ ctx->buffer_used++ ] = index % 190 + 0x41;
     }
 
     return LXB_STATUS_OK;
@@ -268,8 +381,8 @@ lxb_status_t
 lxb_encoding_encode_gbk(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **cps,
                         const lxb_codepoint_t *end)
 {
+    uint16_t index;
     lxb_codepoint_t cp;
-    const lexbor_shs_hash_t *hash;
 
     for (; *cps < end; (*cps)++) {
         cp = **cps;
@@ -289,9 +402,8 @@ lxb_encoding_encode_gbk(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **cps,
             continue;
         }
 
-        hash = lexbor_shs_hash_get_static(lxb_encoding_multi_hash_gb18030,
-                                          LXB_ENCODING_MULTI_HASH_GB18030_SIZE, cp);
-        if (hash == NULL) {
+        index = lxb_encoding_multi_gb18030_index(cp);
+        if (index == UINT16_MAX) {
             LXB_ENCODING_ENCODE_ERROR(ctx);
             continue;
         }
@@ -300,13 +412,13 @@ lxb_encoding_encode_gbk(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **cps,
             return LXB_STATUS_SMALL_BUFFER;
         }
 
-        ctx->buffer_out[ ctx->buffer_used++ ] = (lxb_char_t) (uintptr_t) hash->value / 190 + 0x81;
+        ctx->buffer_out[ ctx->buffer_used++ ] = index / 190 + 0x81;
 
-        if (((lxb_char_t) (uintptr_t) hash->value % 190) < 0x3F) {
-            ctx->buffer_out[ ctx->buffer_used++ ] = ((lxb_char_t) (uintptr_t) hash->value % 190) + 0x40;
+        if ((index % 190) < 0x3F) {
+            ctx->buffer_out[ ctx->buffer_used++ ] = (index % 190) + 0x40;
         }
         else {
-            ctx->buffer_out[ ctx->buffer_used++ ] = ((lxb_char_t) (uintptr_t) hash->value % 190) + 0x41;
+            ctx->buffer_out[ ctx->buffer_used++ ] = (index % 190) + 0x41;
         }
     }
 
@@ -327,14 +439,14 @@ lxb_encoding_encode_iso_2022_jp(lxb_encoding_encode_t *ctx, const lxb_codepoint_
                                 const lxb_codepoint_t *end)
 {
     int8_t size;
+    uint16_t index;
     unsigned state;
     lxb_codepoint_t cp;
-    const lexbor_shs_hash_t *hash;
 
-    size = 0;
     state = ctx->state;
 
     for (; *cps < end; (*cps)++) {
+        size = 0;
         cp = **cps;
 
     begin:
@@ -470,12 +582,11 @@ lxb_encoding_encode_iso_2022_jp(lxb_encoding_encode_t *ctx, const lxb_codepoint_
         }
 
         if ((unsigned) (cp - 0xFF61) <= (0xFF9F - 0xFF61)) {
-            cp = lxb_encoding_multi_index_iso_2022_jp_katakana[cp - 0xFF61].codepoint;
+            cp = lxb_encoding_multi_iso_2022_jp_katakana_map[cp - 0xFF61];
         }
 
-        hash = lexbor_shs_hash_get_static(lxb_encoding_multi_hash_jis0208,
-                                          LXB_ENCODING_MULTI_HASH_JIS0208_SIZE, cp);
-        if (hash == NULL) {
+        index = lxb_encoding_multi_jis0208_index(cp);
+        if (index == UINT16_MAX) {
             goto failed;
         }
 
@@ -493,8 +604,8 @@ lxb_encoding_encode_iso_2022_jp(lxb_encoding_encode_t *ctx, const lxb_codepoint_
             goto begin;
         }
 
-        ctx->buffer_out[ ctx->buffer_used++ ] = (uint32_t) (uintptr_t) hash->value / 94 + 0x21;
-        ctx->buffer_out[ ctx->buffer_used++ ] = (uint32_t) (uintptr_t) hash->value % 94 + 0x21;
+        ctx->buffer_out[ ctx->buffer_used++ ] = index / 94 + 0x21;
+        ctx->buffer_out[ ctx->buffer_used++ ] = index % 94 + 0x21;
 
         continue;
 
@@ -649,34 +760,23 @@ lxb_encoding_encode_koi8_u(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **c
                                     LXB_ENCODING_SINGLE_HASH_KOI8_U_SIZE);
 }
 
-lxb_inline const lexbor_shs_hash_t *
+lxb_inline uint16_t
 lxb_encoding_encode_shift_jis_index(lxb_codepoint_t cp)
 {
-    const lexbor_shs_hash_t *entry;
+    uint16_t index;
 
-    entry = &lxb_encoding_multi_hash_jis0208[ (cp % LXB_ENCODING_MULTI_HASH_JIS0208_SIZE) + 1 ];
+    index = lxb_encoding_multi_jis0208_index(cp);
 
-    do {
-        if (entry->key == cp) {
-            if ((unsigned) ((uint32_t) (uintptr_t) entry->value - 8272) > (8835 - 8272)) {
-                return entry;
-            }
-        }
-
-        entry = &lxb_encoding_multi_hash_jis0208[entry->next];
-    }
-    while (entry != lxb_encoding_multi_hash_jis0208);
-
-    return NULL;
+    return ((index - 8272) > (8835 - 8272)) ? UINT16_MAX : index;
 }
 
 lxb_status_t
 lxb_encoding_encode_shift_jis(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **cps,
                               const lxb_codepoint_t *end)
 {
+    uint16_t index;
     uint32_t lead, trail;
     lxb_codepoint_t cp;
-    const lexbor_shs_hash_t *hash;
 
     for (; *cps < end; (*cps)++) {
         cp = **cps;
@@ -705,8 +805,8 @@ lxb_encoding_encode_shift_jis(lxb_encoding_encode_t *ctx, const lxb_codepoint_t 
                 break;
         }
 
-        hash = lxb_encoding_encode_shift_jis_index(cp);
-        if (hash == NULL) {
+        index = lxb_encoding_encode_shift_jis_index(cp);
+        if (index == UINT16_MAX) {
             LXB_ENCODING_ENCODE_ERROR(ctx);
             continue;
         }
@@ -715,8 +815,8 @@ lxb_encoding_encode_shift_jis(lxb_encoding_encode_t *ctx, const lxb_codepoint_t 
             return LXB_STATUS_SMALL_BUFFER;
         }
 
-        lead = (uint32_t) (uintptr_t) hash->value / 188;
-        trail = (uint32_t) (uintptr_t) hash->value % 188;
+        lead = index / 188;
+        trail = index % 188;
 
         ctx->buffer_out[ctx->buffer_used++ ] = lead + ((lead < 0x1F) ? 0x81 : 0xC1);
         ctx->buffer_out[ctx->buffer_used++ ] = trail + ((trail < 0x3F) ? 0x40 : 0x41);
@@ -902,7 +1002,6 @@ lxb_encoding_encode_gb18030(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **
 {
     uint32_t index;
     lxb_codepoint_t cp;
-    const lexbor_shs_hash_t *hash;
 
     for (; *cps < end; (*cps)++) {
         cp = **cps;
@@ -917,20 +1016,19 @@ lxb_encoding_encode_gb18030(lxb_encoding_encode_t *ctx, const lxb_codepoint_t **
             continue;
         }
 
-        hash = lexbor_shs_hash_get_static(lxb_encoding_multi_hash_gb18030,
-                                          LXB_ENCODING_MULTI_HASH_GB18030_SIZE, cp);
-        if (hash != NULL) {
+        index = lxb_encoding_multi_gb18030_index(cp);
+        if (index != UINT16_MAX) {
             if ((ctx->buffer_used + 2) > ctx->buffer_length) {
                 return LXB_STATUS_SMALL_BUFFER;
             }
 
-            ctx->buffer_out[ ctx->buffer_used++ ] = (uint32_t) (uintptr_t) hash->value / 190 + 0x81;
+            ctx->buffer_out[ ctx->buffer_used++ ] = index / 190 + 0x81;
 
-            if (((uint32_t) (uintptr_t) hash->value % 190) < 0x3F) {
-                ctx->buffer_out[ ctx->buffer_used++ ] = ((uint32_t) (uintptr_t) hash->value % 190) + 0x40;
+            if ((index % 190) < 0x3F) {
+                ctx->buffer_out[ ctx->buffer_used++ ] = (index % 190) + 0x40;
             }
             else {
-                ctx->buffer_out[ ctx->buffer_used++ ] = ((uint32_t) (uintptr_t) hash->value % 190) + 0x41;
+                ctx->buffer_out[ ctx->buffer_used++ ] = (index % 190) + 0x41;
             }
 
             continue;
@@ -1109,7 +1207,7 @@ int8_t
 lxb_encoding_encode_big5_single(lxb_encoding_encode_t *ctx, lxb_char_t **data,
                                 const lxb_char_t *end, lxb_codepoint_t cp)
 {
-    const lexbor_shs_hash_t *hash;
+    uint16_t index;
 
     if (cp < 0x80) {
         *(*data)++ = (lxb_char_t) cp;
@@ -1117,9 +1215,8 @@ lxb_encoding_encode_big5_single(lxb_encoding_encode_t *ctx, lxb_char_t **data,
         return 1;
     }
 
-    hash = lexbor_shs_hash_get_static(lxb_encoding_multi_hash_big5,
-                                      LXB_ENCODING_MULTI_HASH_BIG5_SIZE, cp);
-    if (hash == NULL) {
+    index = lxb_encoding_multi_big5_index(cp);
+    if (index == UINT16_MAX) {
         return LXB_ENCODING_ENCODE_ERROR;
     }
 
@@ -1127,13 +1224,13 @@ lxb_encoding_encode_big5_single(lxb_encoding_encode_t *ctx, lxb_char_t **data,
         return LXB_ENCODING_ENCODE_SMALL_BUFFER;
     }
 
-    *(*data)++ = ((uint32_t) (uintptr_t) hash->value) / 157 + 0x81;
+    *(*data)++ = index / 157 + 0x81;
 
-    if ((((uint32_t) (uintptr_t) hash->value) % 157) < 0x3F) {
-        *(*data)++ = (((uint32_t) (uintptr_t) hash->value) % 157) + 0x40;
+    if ((index % 157) < 0x3F) {
+        *(*data)++ = (index % 157) + 0x40;
     }
     else {
-        *(*data)++ = (((uint32_t) (uintptr_t) hash->value) % 157) + 0x62;
+        *(*data)++ = (index % 157) + 0x62;
     }
 
     return 2;
@@ -1143,7 +1240,7 @@ int8_t
 lxb_encoding_encode_euc_jp_single(lxb_encoding_encode_t *ctx, lxb_char_t **data,
                                   const lxb_char_t *end, lxb_codepoint_t cp)
 {
-    const lexbor_shs_hash_t *hash;
+    uint16_t index;
 
     if (cp < 0x80) {
         *(*data)++ = (lxb_char_t) cp;
@@ -1178,14 +1275,13 @@ lxb_encoding_encode_euc_jp_single(lxb_encoding_encode_t *ctx, lxb_char_t **data,
         cp = 0xFF0D;
     }
 
-    hash = lexbor_shs_hash_get_static(lxb_encoding_multi_hash_jis0208,
-                                      LXB_ENCODING_MULTI_HASH_JIS0208_SIZE, cp);
-    if (hash == NULL) {
+    index = lxb_encoding_multi_jis0208_index(cp);
+    if (index == UINT16_MAX) {
         return LXB_ENCODING_ENCODE_ERROR;
     }
 
-    *(*data)++ = (uint32_t) (uintptr_t) hash->value / 94 + 0xA1;
-    *(*data)++ = (uint32_t) (uintptr_t) hash->value % 94 + 0xA1;
+    *(*data)++ = index / 94 + 0xA1;
+    *(*data)++ = index % 94 + 0xA1;
 
     return 2;
 }
@@ -1194,7 +1290,7 @@ int8_t
 lxb_encoding_encode_euc_kr_single(lxb_encoding_encode_t *ctx, lxb_char_t **data,
                                   const lxb_char_t *end, lxb_codepoint_t cp)
 {
-    const lexbor_shs_hash_t *hash;
+    uint16_t index;
 
     if (cp < 0x80) {
         *(*data)++ = (lxb_char_t) cp;
@@ -1206,14 +1302,13 @@ lxb_encoding_encode_euc_kr_single(lxb_encoding_encode_t *ctx, lxb_char_t **data,
         return LXB_ENCODING_ENCODE_SMALL_BUFFER;
     }
 
-    hash = lexbor_shs_hash_get_static(lxb_encoding_multi_hash_euc_kr,
-                                      LXB_ENCODING_MULTI_HASH_EUC_KR_SIZE, cp);
-    if (hash == NULL) {
+    index = lxb_encoding_multi_euc_kr_index(cp);
+    if (index == UINT16_MAX) {
         return LXB_ENCODING_ENCODE_ERROR;
     }
 
-    *(*data)++ = (uint32_t) (uintptr_t) hash->value / 190 + 0x81;
-    *(*data)++ = (uint32_t) (uintptr_t) hash->value % 190 + 0x41;
+    *(*data)++ = index / 190 + 0x81;
+    *(*data)++ = index % 190 + 0x41;
 
     return 2;
 }
@@ -1222,7 +1317,7 @@ int8_t
 lxb_encoding_encode_gbk_single(lxb_encoding_encode_t *ctx, lxb_char_t **data,
                                const lxb_char_t *end, lxb_codepoint_t cp)
 {
-    const lexbor_shs_hash_t *hash;
+    uint16_t index;
 
     if (cp < 0x80) {
         *(*data)++ = (lxb_char_t) cp;
@@ -1240,20 +1335,19 @@ lxb_encoding_encode_gbk_single(lxb_encoding_encode_t *ctx, lxb_char_t **data,
         return 1;
     }
 
-    hash = lexbor_shs_hash_get_static(lxb_encoding_multi_hash_gb18030,
-                                      LXB_ENCODING_MULTI_HASH_GB18030_SIZE, cp);
-    if (hash != NULL) {
+    index = lxb_encoding_multi_gb18030_index(cp);
+    if (index != UINT16_MAX) {
         if ((*data + 2) > end) {
             return LXB_ENCODING_ENCODE_SMALL_BUFFER;
         }
 
-        *(*data)++ = (lxb_char_t) (uintptr_t) hash->value / 190 + 0x81;
+        *(*data)++ = index / 190 + 0x81;
 
-        if (((lxb_char_t) (uintptr_t) hash->value % 190) < 0x3F) {
-            *(*data)++ = ((lxb_char_t) (uintptr_t) hash->value % 190) + 0x40;
+        if ((index % 190) < 0x3F) {
+            *(*data)++ = (index % 190) + 0x40;
         }
         else {
-            *(*data)++ = ((lxb_char_t) (uintptr_t) hash->value % 190) + 0x41;
+            *(*data)++ = (index % 190) + 0x41;
         }
 
         return 2;
@@ -1275,8 +1369,8 @@ lxb_encoding_encode_iso_2022_jp_single(lxb_encoding_encode_t *ctx, lxb_char_t **
                                        const lxb_char_t *end, lxb_codepoint_t cp)
 {
     int8_t size;
+    uint16_t index;
     unsigned state;
-    const lexbor_shs_hash_t *hash;
 
     size = 0;
     state = ctx->state;
@@ -1413,12 +1507,11 @@ begin:
     }
 
     if ((unsigned) (cp - 0xFF61) <= (0xFF9F - 0xFF61)) {
-        cp = lxb_encoding_multi_index_iso_2022_jp_katakana[cp - 0xFF61].codepoint;
+        cp = lxb_encoding_multi_iso_2022_jp_katakana_map[cp - 0xFF61];
     }
 
-    hash = lexbor_shs_hash_get_static(lxb_encoding_multi_hash_jis0208,
-                                      LXB_ENCODING_MULTI_HASH_JIS0208_SIZE, cp);
-    if (hash == NULL) {
+    index = lxb_encoding_multi_jis0208_index(cp);
+    if (index == UINT16_MAX) {
         goto failed;
     }
 
@@ -1436,8 +1529,8 @@ begin:
         goto begin;
     }
 
-    *(*data)++ = (uint32_t) (uintptr_t) hash->value / 94 + 0x21;
-    *(*data)++ = (uint32_t) (uintptr_t) hash->value % 94 + 0x21;
+    *(*data)++ = index / 94 + 0x21;
+    *(*data)++ = index % 94 + 0x21;
 
     return size + 2;
 
@@ -1599,8 +1692,8 @@ int8_t
 lxb_encoding_encode_shift_jis_single(lxb_encoding_encode_t *ctx, lxb_char_t **data,
                                      const lxb_char_t *end, lxb_codepoint_t cp)
 {
+    uint16_t index;
     uint32_t lead, trail;
-    const lexbor_shs_hash_t *hash;
 
     if (cp <= 0x80) {
         *(*data)++ = (lxb_char_t) cp;
@@ -1628,8 +1721,8 @@ lxb_encoding_encode_shift_jis_single(lxb_encoding_encode_t *ctx, lxb_char_t **da
             break;
     }
 
-    hash = lxb_encoding_encode_shift_jis_index(cp);
-    if (hash == NULL) {
+    index = lxb_encoding_encode_shift_jis_index(cp);
+    if (index == UINT16_MAX) {
         return LXB_ENCODING_ENCODE_ERROR;
     }
 
@@ -1637,8 +1730,8 @@ lxb_encoding_encode_shift_jis_single(lxb_encoding_encode_t *ctx, lxb_char_t **da
         return LXB_ENCODING_ENCODE_SMALL_BUFFER;
     }
 
-    lead = (uint32_t) (uintptr_t) hash->value / 188;
-    trail = (uint32_t) (uintptr_t) hash->value % 188;
+    lead = index / 188;
+    trail = index % 188;
 
     *(*data)++ = lead + ((lead < 0x1F) ? 0x81 : 0xC1);
     *(*data)++ = trail + ((trail < 0x3F) ? 0x40 : 0x41);
@@ -1778,7 +1871,6 @@ lxb_encoding_encode_gb18030_single(lxb_encoding_encode_t *ctx, lxb_char_t **data
                                    const lxb_char_t *end, lxb_codepoint_t cp)
 {
     uint32_t index;
-    const lexbor_shs_hash_t *hash;
 
     if (cp < 0x80) {
         *(*data)++ = (lxb_char_t) cp;
@@ -1790,20 +1882,19 @@ lxb_encoding_encode_gb18030_single(lxb_encoding_encode_t *ctx, lxb_char_t **data
         return LXB_ENCODING_ENCODE_ERROR;
     }
 
-    hash = lexbor_shs_hash_get_static(lxb_encoding_multi_hash_gb18030,
-                                      LXB_ENCODING_MULTI_HASH_GB18030_SIZE, cp);
-    if (hash != NULL) {
+    index = lxb_encoding_multi_gb18030_index(cp);
+    if (index != UINT16_MAX) {
         if ((*data + 2) > end) {
             return LXB_ENCODING_ENCODE_SMALL_BUFFER;
         }
 
-        *(*data)++ = (uint32_t) (uintptr_t) hash->value / 190 + 0x81;
+        *(*data)++ = index / 190 + 0x81;
 
-        if (((uint32_t) (uintptr_t) hash->value % 190) < 0x3F) {
-            *(*data)++ = ((uint32_t) (uintptr_t) hash->value % 190) + 0x40;
+        if ((index % 190) < 0x3F) {
+            *(*data)++ = (index % 190) + 0x40;
         }
         else {
-            *(*data)++ = ((uint32_t) (uintptr_t) hash->value % 190) + 0x41;
+            *(*data)++ = (index % 190) + 0x41;
         }
 
         return 2;

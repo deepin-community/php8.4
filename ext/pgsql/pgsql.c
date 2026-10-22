@@ -320,6 +320,10 @@ static void _close_pgsql_plink(zend_resource *rsrc)
 
 static void _php_pgsql_notice_handler(void *l, const char *message)
 {
+	if (l == NULL) {
+		/* This connection does not currently have a valid context, ignore this notice */
+		return;
+	}
 	if (PGG(ignore_notices)) {
 		return;
 	}
@@ -351,6 +355,11 @@ static int _rollback_transactions(zval *el)
 	}
 
 	link = (PGconn *) rsrc->ptr;
+
+	/* unset notice processor if we initially did set it */
+	if (PQsetNoticeProcessor(link, NULL, NULL) == _php_pgsql_notice_handler) {
+		PQsetNoticeProcessor(link, _php_pgsql_notice_handler, NULL);
+	}
 
 	if (PQsetnonblocking(link, 0)) {
 		php_error_docref("ref.pgsql", E_NOTICE, "Cannot set connection to blocking mode");
@@ -696,10 +705,12 @@ static void php_pgsql_do_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)
 			/* create the link */
 			pgsql = PQconnectdb(connstring);
 			if (pgsql == NULL || PQstatus(pgsql) == CONNECTION_BAD) {
-				PHP_PQ_ERROR("Unable to connect to PostgreSQL server: %s", pgsql)
+				zend_string *msgbuf = _php_pgsql_trim_message(PQerrorMessage(pgsql));
 				if (pgsql) {
 					PQfinish(pgsql);
 				}
+				php_error_docref(NULL, E_WARNING, "Unable to connect to PostgreSQL server: %s", ZSTR_VAL(msgbuf));
+				zend_string_release(msgbuf);
 				goto err;
 			}
 
@@ -780,19 +791,23 @@ static void php_pgsql_do_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)
 		if (connect_type & PGSQL_CONNECT_ASYNC) {
 			pgsql = PQconnectStart(connstring);
 			if (pgsql==NULL || PQstatus(pgsql)==CONNECTION_BAD) {
-				PHP_PQ_ERROR("Unable to connect to PostgreSQL server: %s", pgsql);
+				zend_string *msgbuf = _php_pgsql_trim_message(PQerrorMessage(pgsql));
 				if (pgsql) {
 					PQfinish(pgsql);
 				}
+				php_error_docref(NULL, E_WARNING, "Unable to connect to PostgreSQL server: %s", ZSTR_VAL(msgbuf));
+				zend_string_release(msgbuf);
 				goto err;
 			}
 		} else {
 			pgsql = PQconnectdb(connstring);
 			if (pgsql==NULL || PQstatus(pgsql)==CONNECTION_BAD) {
-				PHP_PQ_ERROR("Unable to connect to PostgreSQL server: %s", pgsql);
+				zend_string *msgbuf = _php_pgsql_trim_message(PQerrorMessage(pgsql));
 				if (pgsql) {
 					PQfinish(pgsql);
 				}
+				php_error_docref(NULL, E_WARNING, "Unable to connect to PostgreSQL server: %s", ZSTR_VAL(msgbuf));
+				zend_string_release(msgbuf);
 				goto err;
 			}
 		}
@@ -1201,15 +1216,13 @@ PHP_FUNCTION(pg_query)
 
 static void _php_pgsql_free_params(char **params, int num_params)
 {
-	if (num_params > 0) {
-		int i;
-		for (i = 0; i < num_params; i++) {
-			if (params[i]) {
-				efree(params[i]);
-			}
+	int i;
+	for (i = 0; i < num_params; i++) {
+		if (params[i]) {
+			efree(params[i]);
 		}
-		efree(params);
 	}
+	efree(params);
 }
 
 /* Execute a query */
@@ -2057,7 +2070,11 @@ static void php_pgsql_fetch_hash(INTERNAL_FUNCTION_PARAMETERS, zend_long result_
 		zval dataset;
 
 		ZVAL_COPY_VALUE(&dataset, return_value);
-		object_init_ex(return_value, ce);
+		zend_result obj_initialized = object_init_ex(return_value, ce);
+		if (UNEXPECTED(obj_initialized == FAILURE)) {
+			zval_ptr_dtor(&dataset);
+			RETURN_THROWS();
+		}
 		if (!ce->default_properties_count && !ce->__set) {
 			Z_OBJ_P(return_value)->properties = Z_ARR(dataset);
 		} else {
@@ -4824,7 +4841,7 @@ static int php_pgsql_convert_match(const zend_string *str, zend_string *regex)
  */
 static zend_string *php_pgsql_add_quotes(zend_string *src)
 {
-	return zend_string_concat3("E'", strlen("E'"), ZSTR_VAL(src), ZSTR_LEN(src), "'", strlen("'"));
+	return zend_string_concat3("'", strlen("'"), ZSTR_VAL(src), ZSTR_LEN(src), "'", strlen("'"));
 }
 /* }}} */
 
@@ -5095,7 +5112,6 @@ PHP_PGSQL_API zend_result php_pgsql_convert(PGconn *pg_link, const zend_string *
 							zend_string *str;
 							/* PostgreSQL ignores \0 */
 							str = zend_string_alloc(Z_STRLEN_P(val) * 2, 0);
-							/* better to use PGSQLescapeLiteral since PGescapeStringConn does not handle special \ */
 							ZSTR_LEN(str) = PQescapeStringConn(pg_link, ZSTR_VAL(str),
 									Z_STRVAL_P(val), Z_STRLEN_P(val), &escape_err);
 							if (escape_err) {
@@ -5621,7 +5637,7 @@ PHP_PGSQL_API zend_result php_pgsql_insert(PGconn *pg_link, const zend_string *t
 			goto cleanup;
 		}
 		if (opt & PGSQL_DML_ESCAPE) {
-			tmp = PQescapeIdentifier(pg_link, ZSTR_VAL(fld), ZSTR_LEN(fld) + 1);
+			tmp = PQescapeIdentifier(pg_link, ZSTR_VAL(fld), ZSTR_LEN(fld));
 			if (tmp == NULL) {
 				php_error_docref(NULL, E_NOTICE, "Failed to escape field '%s'", ZSTR_VAL(fld));
 				goto cleanup;
@@ -5806,7 +5822,7 @@ static inline int build_assignment_string(PGconn *pg_link, smart_str *querystr, 
 			return -1;
 		}
 		if (opt & PGSQL_DML_ESCAPE) {
-			char *tmp = PQescapeIdentifier(pg_link, ZSTR_VAL(fld), ZSTR_LEN(fld) + 1);
+			char *tmp = PQescapeIdentifier(pg_link, ZSTR_VAL(fld), ZSTR_LEN(fld));
 			if (tmp == NULL) {
 				php_error_docref(NULL, E_NOTICE, "Failed to escape field '%s'", ZSTR_VAL(fld));
 				return -1;

@@ -2,10 +2,13 @@
 GH-11189: Exceeding memory limit in zend_hash_do_resize leaves the array in an invalid state (packed array)
 --SKIPIF--
 <?php
+if (PHP_OS_FAMILY === 'Windows') {
+    die("xfail fails on Windows Server 2022 and newer.");
+}
 if (getenv("USE_ZEND_ALLOC") === "0") die("skip ZMM is disabled");
 ?>
 --INI--
-memory_limit=2M
+memory_limit=10M
 --FILE--
 <?php
 
@@ -25,5 +28,4 @@ while (1) {
 
 ?>
 --EXPECTF--
-Success
-Fatal error: Allowed memory size of %s bytes exhausted%s(tried to allocate %s bytes) in %s on line %d
+Fatal error: Allowed memory size of 10485760 bytes exhausted %S(tried to allocate %d bytes) in %s on line %d

@@ -1,14 +1,10 @@
 /*
- * Copyright (C) 2018 Alexander Borisov
+ * Copyright (C) 2018-2026 Alexander Borisov
  *
  * Author: Alexander Borisov <borisov@lexbor.com>
  */
 
 #include "lexbor/core/str.h"
-
-#define LEXBOR_STR_RES_ANSI_REPLACEMENT_CHARACTER
-#define LEXBOR_STR_RES_MAP_LOWERCASE
-#define LEXBOR_STR_RES_MAP_UPPERCASE
 #include "lexbor/core/str_res.h"
 
 
@@ -80,6 +76,7 @@ lexbor_str_destroy(lexbor_str_t *str, lexbor_mraw_t *mraw, bool destroy_obj)
     }
 
     if (str->data != NULL) {
+        lexbor_str_clean(str);
         str->data = lexbor_mraw_free(mraw, str->data);
     }
 
@@ -132,6 +129,10 @@ lexbor_str_append(lexbor_str_t *str, lexbor_mraw_t *mraw,
                   const lxb_char_t *buff, size_t length)
 {
     lxb_char_t *data_begin;
+
+    if (length == 0) {
+        return str->data;
+    }
 
     lexbor_str_check_size_arg_m(str, lexbor_str_size(str),
                                 mraw, (length + 1), NULL);
@@ -374,6 +375,30 @@ lexbor_str_whitespace_from_end(lexbor_str_t *target)
     }
 
     return 0;
+}
+
+lxb_char_t *
+lexbor_str_copy_to(lexbor_str_t *str, const lxb_char_t *buff, size_t length)
+{
+    lxb_char_t *data_begin;
+
+    data_begin = &str->data[str->length];
+    memcpy(data_begin, buff, sizeof(lxb_char_t) * length);
+
+    str->length += length;
+
+    return data_begin;
+}
+
+lxb_char_t *
+lexbor_str_copy_to_with_null(lexbor_str_t *str,
+                             const lxb_char_t *buff, size_t length)
+{
+    lxb_char_t *data_begin = lexbor_str_copy_to(str, buff, length);
+
+    str->data[str->length] = '\0';
+
+    return data_begin;
 }
 
 /*

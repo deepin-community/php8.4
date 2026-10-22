@@ -34,6 +34,7 @@
 #include "zend_enum.h"
 #include "zend_object_handlers.h"
 #include "zend_observer.h"
+#include "zend_system_id.h"
 
 #include <stdarg.h>
 
@@ -1512,6 +1513,9 @@ ZEND_API zend_result zend_update_class_constant(zend_class_constant *c, const ze
 	zval_ptr_dtor(&c->value);
 	ZVAL_COPY_VALUE(&c->value, &tmp);
 
+	/* may not return SUCCESS in case of an exception,
+	 * should've returned FAILURE in zval_update_constant_ex! */
+	ZEND_ASSERT(!EG(exception));
 	return SUCCESS;
 }
 
@@ -1758,6 +1762,14 @@ ZEND_API void object_properties_load(zend_object *object, HashTable *properties)
 				property_info &&
 				(property_info->flags & ZEND_ACC_STATIC) == 0) {
 				zval *slot = OBJ_PROP(object, property_info->offset);
+				if (UNEXPECTED((property_info->flags & ZEND_ACC_READONLY) && !Z_ISUNDEF_P(slot))) {
+					if (Z_PROP_FLAG_P(slot) & IS_PROP_REINITABLE) {
+						Z_PROP_FLAG_P(slot) &= ~IS_PROP_REINITABLE;
+					} else {
+						zend_readonly_property_modification_error(property_info);
+						return;
+					}
+				}
 				zval_ptr_dtor(slot);
 				ZVAL_COPY_VALUE(slot, prop);
 				zval_add_ref(slot);
@@ -1924,6 +1936,18 @@ ZEND_API void object_init(zval *arg) /* {{{ */
 	ZVAL_OBJ(arg, zend_objects_new(zend_standard_class_def));
 }
 /* }}} */
+
+ZEND_API bool object_finit(zval *arg)
+{
+	zend_object *obj = zend_objects_fnew(zend_standard_class_def);
+
+	if (UNEXPECTED(obj == NULL)) {
+		ZVAL_NULL(arg);
+		return false;
+	}
+	ZVAL_OBJ(arg, obj);
+	return true;
+}
 
 ZEND_API void add_assoc_long_ex(zval *arg, const char *key, size_t key_len, zend_long n) /* {{{ */
 {
@@ -2241,6 +2265,9 @@ ZEND_API zend_result array_set_zval_key(HashTable *ht, zval *key, zval *value) /
 			break;
 		case IS_RESOURCE:
 			zend_use_resource_as_offset(key);
+			if (UNEXPECTED(EG(exception))) {
+				return FAILURE;
+			}
 			result = zend_hash_index_update(ht, Z_RES_HANDLE_P(key), value);
 			break;
 		case IS_FALSE:
@@ -2252,9 +2279,14 @@ ZEND_API zend_result array_set_zval_key(HashTable *ht, zval *key, zval *value) /
 		case IS_LONG:
 			result = zend_hash_index_update(ht, Z_LVAL_P(key), value);
 			break;
-		case IS_DOUBLE:
-			result = zend_hash_index_update(ht, zend_dval_to_lval_safe(Z_DVAL_P(key)), value);
+		case IS_DOUBLE: {
+			zend_long lval = zend_dval_to_lval_safe(Z_DVAL_P(key));
+			if (UNEXPECTED(EG(exception))) {
+				return FAILURE;
+			}
+			result = zend_hash_index_update(ht, lval, value);
 			break;
+		}
 		default:
 			zend_illegal_container_offset(ZSTR_KNOWN(ZEND_STR_ARRAY), key, BP_VAR_W);
 			result = NULL;
@@ -2965,7 +2997,11 @@ ZEND_API zend_result zend_register_functions(zend_class_entry *scope, const zend
 		internal_function->prototype = NULL;
 		internal_function->prop_info = NULL;
 		internal_function->attributes = NULL;
-		internal_function->frameless_function_infos = ptr->frameless_function_infos;
+		if (type == MODULE_TEMPORARY) {
+			internal_function->frameless_function_infos = NULL;
+		} else {
+			internal_function->frameless_function_infos = ptr->frameless_function_infos;
+		}
 		if (EG(active)) { // at run-time: this ought to only happen if registered with dl() or somehow temporarily at runtime
 			ZEND_MAP_PTR_INIT(internal_function->run_time_cache, zend_arena_calloc(&CG(arena), 1, zend_internal_run_time_cache_reserved_size()));
 		} else {
@@ -3088,6 +3124,7 @@ ZEND_API zend_result zend_register_functions(zend_class_entry *scope, const zend
 				}
 				zend_flf_handlers[zend_flf_count] = flf_info->handler;
 				zend_flf_functions[zend_flf_count] = (zend_function *)reg_function;
+				zend_add_system_entropy("frameless", ZSTR_VAL(reg_function->function_name), &flf_info->num_args, sizeof(flf_info->num_args));
 				zend_flf_count++;
 				flf_info++;
 			}
@@ -3838,6 +3875,10 @@ static bool zend_is_callable_check_class(zend_string *name, zend_class_entry *sc
 		if (error) zend_spprintf(error, 0, "class \"%.*s\" not found", (int)name_len, ZSTR_VAL(name));
 	}
 	ZSTR_ALLOCA_FREE(lcname, use_heap);
+	/* User error handlers may throw from deprecations above; do not report callable as valid. */
+	if (UNEXPECTED(EG(exception))) {
+		return false;
+	}
 	return ret;
 }
 /* }}} */

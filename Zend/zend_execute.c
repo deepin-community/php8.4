@@ -4083,6 +4083,8 @@ ZEND_API ZEND_COLD void ZEND_FASTCALL zend_fcall_interrupt(zend_execute_data *ca
 	zend_atomic_bool_store_ex(&EG(vm_interrupt), false);
 	if (zend_atomic_bool_load_ex(&EG(timed_out))) {
 		zend_timeout();
+	} else if (ZEND_HAS_OOM()) {
+		zend_handle_delayed_oom();
 	} else if (zend_interrupt_function) {
 		zend_interrupt_function(call);
 	}
@@ -4673,19 +4675,17 @@ static void cleanup_unfinished_calls(zend_execute_data *execute_data, uint32_t o
 }
 /* }}} */
 
-static const zend_live_range *find_live_range(const zend_op_array *op_array, uint32_t op_num, uint32_t var_num) /* {{{ */
+/* Same as cleanup_unfinished_calls(), but only free the call frames. */
+static void free_unfinished_calls(zend_execute_data *execute_data)
 {
-	int i;
-	for (i = 0; i < op_array->last_live_range; i++) {
-		const zend_live_range *range = &op_array->live_range[i];
-		if (op_num >= range->start && op_num < range->end
-				&& var_num == (range->var & ~ZEND_LIVE_MASK)) {
-			return range;
-		}
+	zend_execute_data *call = EX(call);
+
+	while (UNEXPECTED(call != NULL)) {
+		EX(call) = call->prev_execute_data;
+		zend_vm_stack_free_call_frame(call);
+		call = EX(call);
 	}
-	return NULL;
 }
-/* }}} */
 
 static void cleanup_live_vars(zend_execute_data *execute_data, uint32_t op_num, uint32_t catch_op_num) /* {{{ */
 {
@@ -4701,6 +4701,16 @@ static void cleanup_live_vars(zend_execute_data *execute_data, uint32_t op_num, 
 				uint32_t kind = range->var & ZEND_LIVE_MASK;
 				uint32_t var_num = range->var & ~ZEND_LIVE_MASK;
 				zval *var = EX_VAR(var_num);
+
+				/* Handle the split range for loop vars */
+				if (catch_op_num) {
+					zend_op *final_op = EX(func)->op_array.opcodes + range->end;
+					if (final_op->extended_value & ZEND_FREE_ON_RETURN && (final_op->opcode == ZEND_FE_FREE || final_op->opcode == ZEND_FREE)) {
+						if (catch_op_num < range->end + final_op->op2.num) {
+							continue;
+						}
+					}
+				}
 
 				if (kind == ZEND_LIVE_TMPVAR) {
 					zval_ptr_dtor_nogc(var);
@@ -5250,7 +5260,12 @@ static zend_never_inline zend_result ZEND_FASTCALL zend_quick_check_constant(
 
 static zend_always_inline uint32_t zend_get_arg_offset_by_name(
 		zend_function *fbc, zend_string *arg_name, void **cache_slot) {
-	if (EXPECTED(*cache_slot == fbc)) {
+	/* Due to closures, the `fbc` address isn't unique if the memory address is reused.
+	 * The argument info will be however and uniquely positions the arguments.
+	 * We do support NULL arg_info, so we have to distinguish that from an uninitialized cache slot. */
+	void *unique_id = (void *) ((uintptr_t) fbc->common.arg_info | 1);
+
+	if (EXPECTED(*cache_slot == unique_id)) {
 		return *(uintptr_t *)(cache_slot + 1);
 	}
 
@@ -5259,10 +5274,12 @@ static zend_always_inline uint32_t zend_get_arg_offset_by_name(
 	if (EXPECTED(fbc->type == ZEND_USER_FUNCTION)
 			|| EXPECTED(fbc->common.fn_flags & ZEND_ACC_USER_ARG_INFO)) {
 		for (uint32_t i = 0; i < num_args; i++) {
-			zend_arg_info *arg_info = &fbc->op_array.arg_info[i];
+			zend_arg_info *arg_info = &fbc->common.arg_info[i];
 			if (zend_string_equals(arg_name, arg_info->name)) {
-				*cache_slot = fbc;
-				*(uintptr_t *)(cache_slot + 1) = i;
+				if (fbc->type == ZEND_USER_FUNCTION && (!fbc->op_array.refcount || !(fbc->op_array.fn_flags & ZEND_ACC_CLOSURE))) {
+					*cache_slot = unique_id;
+					*(uintptr_t *)(cache_slot + 1) = i;
+				}
 				return i;
 			}
 		}
@@ -5271,7 +5288,7 @@ static zend_always_inline uint32_t zend_get_arg_offset_by_name(
 			zend_internal_arg_info *arg_info = &fbc->internal_function.arg_info[i];
 			size_t len = strlen(arg_info->name);
 			if (zend_string_equals_cstr(arg_name, arg_info->name, len)) {
-				*cache_slot = fbc;
+				*cache_slot = unique_id;
 				*(uintptr_t *)(cache_slot + 1) = i;
 				return i;
 			}
@@ -5279,8 +5296,13 @@ static zend_always_inline uint32_t zend_get_arg_offset_by_name(
 	}
 
 	if (fbc->common.fn_flags & ZEND_ACC_VARIADIC) {
-		*cache_slot = fbc;
-		*(uintptr_t *)(cache_slot + 1) = fbc->common.num_args;
+		if ((fbc->type == ZEND_USER_FUNCTION
+		  && (!fbc->op_array.refcount || !(fbc->op_array.fn_flags & ZEND_ACC_CLOSURE)))
+		 || (fbc->type == ZEND_INTERNAL_FUNCTION
+		  && !(fbc->common.fn_flags & ZEND_ACC_USER_ARG_INFO))) {
+			*cache_slot = unique_id;
+			*(uintptr_t *)(cache_slot + 1) = fbc->common.num_args;
+		}
 		return fbc->common.num_args;
 	}
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2021 Alexander Borisov
+ * Copyright (C) 2018-2025 Alexander Borisov
  *
  * Author: Alexander Borisov <borisov@lexbor.com>
  */
@@ -15,8 +15,6 @@ extern "C" {
 
 #include "lexbor/tag/const.h"
 #include "lexbor/ns/const.h"
-
-#include "lexbor/dom/exception.h"
 
 
 #define lxb_dom_interface_cdata_section(obj) ((lxb_dom_cdata_section_t *) (obj))
@@ -67,19 +65,6 @@ typedef lxb_dom_interface_t *
 
 typedef lxb_dom_interface_t *
 (*lxb_dom_interface_destroy_f)(lxb_dom_interface_t *intrfc);
-
-typedef lxb_status_t
-(*lxb_dom_event_insert_f)(lxb_dom_node_t *node);
-
-typedef lxb_status_t
-(*lxb_dom_event_remove_f)(lxb_dom_node_t *node);
-
-typedef lxb_status_t
-(*lxb_dom_event_destroy_f)(lxb_dom_node_t *node);
-
-typedef lxb_status_t
-(*lxb_dom_event_set_value_f)(lxb_dom_node_t *node,
-                             const lxb_char_t *value, size_t length);
 
 
 LXB_API lxb_dom_interface_t *

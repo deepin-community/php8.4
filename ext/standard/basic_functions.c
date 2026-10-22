@@ -157,7 +157,9 @@ zend_module_entry basic_functions_module = { /* {{{ */
 	PHP_RSHUTDOWN(basic),		/* request shutdown */
 	PHP_MINFO(basic),			/* extension info */
 	PHP_STANDARD_VERSION,		/* extension version */
-	STANDARD_MODULE_PROPERTIES
+	NO_MODULE_GLOBALS,
+	ZEND_MODULE_POST_ZEND_DEACTIVATE_N(streams),
+	STANDARD_MODULE_PROPERTIES_EX
 };
 /* }}} */
 
@@ -463,7 +465,6 @@ PHP_RSHUTDOWN_FUNCTION(basic) /* {{{ */
 #endif
 	BASIC_RSHUTDOWN_SUBMODULE(assert)
 	BASIC_RSHUTDOWN_SUBMODULE(url_scanner_ex)
-	BASIC_RSHUTDOWN_SUBMODULE(streams)
 #ifdef PHP_WIN32
 	BASIC_RSHUTDOWN_SUBMODULE(win32_core_globals)
 #endif
@@ -485,6 +486,18 @@ PHP_RSHUTDOWN_FUNCTION(basic) /* {{{ */
 	return SUCCESS;
 }
 /* }}} */
+
+/* Called from php_request_startup(), before any request data is processed. */
+PHPAPI void php_basic_early_rinit(void)
+{
+	/* The session upload progress handler (un)serializes the session and
+	 * registers the session id with the URL rewriter from
+	 * php_hash_environment(), before RINIT. */
+	BG(serialize_lock) = 0;
+	memset(&BG(serialize), 0, sizeof(BG(serialize)));
+	memset(&BG(unserialize), 0, sizeof(BG(unserialize)));
+	php_url_scanner_early_rinit();
+}
 
 PHP_MINFO_FUNCTION(basic) /* {{{ */
 {
@@ -560,7 +573,7 @@ PHP_FUNCTION(inet_pton)
 	char buffer[17];
 
 	ZEND_PARSE_PARAMETERS_START(1, 1)
-		Z_PARAM_STRING(address, address_len)
+		Z_PARAM_PATH(address, address_len)
 	ZEND_PARSE_PARAMETERS_END();
 
 	memset(buffer, 0, sizeof(buffer));
@@ -592,12 +605,26 @@ PHP_FUNCTION(ip2long)
 	struct in_addr ip;
 
 	ZEND_PARSE_PARAMETERS_START(1, 1)
-		Z_PARAM_STRING(addr, addr_len)
+		Z_PARAM_PATH(addr, addr_len)
 	ZEND_PARSE_PARAMETERS_END();
 
 	if (addr_len == 0 || inet_pton(AF_INET, addr, &ip) != 1) {
 		RETURN_FALSE;
 	}
+#ifdef _AIX
+	/*
+	AIX accepts IP strings with extraneous 0 (192.168.042.42 will be treated as
+	192.168.42.42), while Linux doesn't.
+	For consistency, we convert back the IP to a string and check if it is equal to
+	the original string. If not, the IP should be considered invalid.
+	*/
+	char str[INET_ADDRSTRLEN];
+	const char* result = inet_ntop(AF_INET, &ip, str, sizeof(str));
+	ZEND_ASSERT(result != NULL);
+	if (strcmp(addr, result) != 0) {
+		RETURN_FALSE;
+	}
+#endif
 	RETURN_LONG(ntohl(ip.s_addr));
 }
 /* }}} */
@@ -1768,7 +1795,10 @@ PHP_FUNCTION(highlight_file)
 	}
 
 	if (i) {
-		php_output_start_default();
+		if (UNEXPECTED(php_output_start_default() != SUCCESS)) {
+			zend_throw_error(NULL, "Unable to start output handler");
+			RETURN_THROWS();
+		}
 	}
 
 	php_get_highlight_struct(&syntax_highlighter_ini);
@@ -1803,7 +1833,10 @@ PHP_FUNCTION(php_strip_whitespace)
 		Z_PARAM_PATH_STR(filename)
 	ZEND_PARSE_PARAMETERS_END();
 
-	php_output_start_default();
+	if (UNEXPECTED(php_output_start_default() != SUCCESS)) {
+		zend_throw_error(NULL, "Unable to start output handler");
+		RETURN_THROWS();
+	}
 
 	zend_stream_init_filename_ex(&file_handle, filename);
 	zend_save_lexical_state(&original_lex_state);
@@ -1840,7 +1873,10 @@ PHP_FUNCTION(highlight_string)
 	ZEND_PARSE_PARAMETERS_END();
 
 	if (i) {
-		php_output_start_default();
+		if (UNEXPECTED(php_output_start_default() != SUCCESS)) {
+			zend_throw_error(NULL, "Unable to start output handler");
+			RETURN_THROWS();
+		}
 	}
 
 	EG(error_reporting) = E_ERROR;
@@ -2015,10 +2051,8 @@ PHP_FUNCTION(ini_set)
 #define _CHECK_PATH(var, var_len, ini) php_ini_check_path(var, var_len, ini, sizeof(ini))
 	/* open basedir check */
 	if (PG(open_basedir)) {
-		if (_CHECK_PATH(ZSTR_VAL(varname), ZSTR_LEN(varname), "error_log") ||
-			_CHECK_PATH(ZSTR_VAL(varname), ZSTR_LEN(varname), "java.class.path") ||
+		if (_CHECK_PATH(ZSTR_VAL(varname), ZSTR_LEN(varname), "java.class.path") ||
 			_CHECK_PATH(ZSTR_VAL(varname), ZSTR_LEN(varname), "java.home") ||
-			_CHECK_PATH(ZSTR_VAL(varname), ZSTR_LEN(varname), "mail.log") ||
 			_CHECK_PATH(ZSTR_VAL(varname), ZSTR_LEN(varname), "java.library.path") ||
 			_CHECK_PATH(ZSTR_VAL(varname), ZSTR_LEN(varname), "vpopmail.directory")) {
 			if (php_check_open_basedir(ZSTR_VAL(new_value_str))) {
@@ -2170,8 +2204,8 @@ PHP_FUNCTION(getservbyname)
 	struct servent *serv;
 
 	ZEND_PARSE_PARAMETERS_START(2, 2)
-		Z_PARAM_STR(name)
-		Z_PARAM_STRING(proto, proto_len)
+		Z_PARAM_PATH_STR(name)
+		Z_PARAM_PATH(proto, proto_len)
 	ZEND_PARSE_PARAMETERS_END();
 
 
@@ -2214,7 +2248,7 @@ PHP_FUNCTION(getservbyport)
 
 	ZEND_PARSE_PARAMETERS_START(2, 2)
 		Z_PARAM_LONG(port)
-		Z_PARAM_STRING(proto, proto_len)
+		Z_PARAM_PATH(proto, proto_len)
 	ZEND_PARSE_PARAMETERS_END();
 
 	serv = getservbyport(htons((unsigned short) port), proto);
@@ -2241,7 +2275,7 @@ PHP_FUNCTION(getprotobyname)
 	struct protoent *ent;
 
 	ZEND_PARSE_PARAMETERS_START(1, 1)
-		Z_PARAM_STRING(name, name_len)
+		Z_PARAM_PATH(name, name_len)
 	ZEND_PARSE_PARAMETERS_END();
 
 	ent = getprotobyname(name);

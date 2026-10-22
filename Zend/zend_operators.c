@@ -402,6 +402,7 @@ try_again:
 				zend_long lval;
 				double dval;
 				bool trailing_data = false;
+				zend_string *op_str = NULL; /* protect against error handlers */
 
 				/* For BC reasons we allow errors so that we can warn on leading numeric string */
 				type = is_numeric_string_ex(Z_STRVAL_P(op), Z_STRLEN_P(op), &lval, &dval,
@@ -411,6 +412,9 @@ try_again:
 					return 0;
 				}
 				if (UNEXPECTED(trailing_data)) {
+					if (type != IS_LONG) {
+						op_str = zend_string_copy(Z_STR_P(op));
+					}
 					zend_error(E_WARNING, "A non-numeric value encountered");
 					if (UNEXPECTED(EG(exception))) {
 						*failed = 1;
@@ -426,11 +430,12 @@ try_again:
 					 */
 					lval = zend_dval_to_lval_cap(dval);
 					if (!zend_is_long_compatible(dval, lval)) {
-						zend_incompatible_string_to_long_error(Z_STR_P(op));
+						zend_incompatible_string_to_long_error(op_str ? op_str : Z_STR_P(op));
 						if (UNEXPECTED(EG(exception))) {
 							*failed = 1;
 						}
 					}
+					zend_tmp_string_release(op_str);
 					return lval;
 				}
 			}
@@ -3065,7 +3070,7 @@ ZEND_API char* ZEND_FASTCALL zend_str_toupper_dup_ex(const char *source, size_t 
 }
 /* }}} */
 
-ZEND_API zend_string* ZEND_FASTCALL zend_string_tolower_ex(zend_string *str, bool persistent) /* {{{ */
+static zend_always_inline zend_string* ZEND_FASTCALL _zend_string_ftolower_ex(zend_string *str, bool persistent, bool fallible)
 {
 	size_t length = ZSTR_LEN(str);
 	unsigned char *p = (unsigned char *) ZSTR_VAL(str);
@@ -3076,7 +3081,10 @@ ZEND_API zend_string* ZEND_FASTCALL zend_string_tolower_ex(zend_string *str, boo
 	while (p + BLOCKCONV_STRIDE <= end) {
 		BLOCKCONV_LOAD(p);
 		if (BLOCKCONV_FOUND()) {
-			zend_string *res = zend_string_alloc(length, persistent);
+			zend_string *res = zend_string_falloc(length, persistent, fallible);
+			if (ZEND_CONST_COND(fallible, true) && UNEXPECTED(!res)) {
+				return NULL;
+			}
 			memcpy(ZSTR_VAL(res), ZSTR_VAL(str), p - (unsigned char *) ZSTR_VAL(str));
 			unsigned char *q = (unsigned char*) ZSTR_VAL(res) + (p - (unsigned char*) ZSTR_VAL(str));
 
@@ -3097,7 +3105,10 @@ ZEND_API zend_string* ZEND_FASTCALL zend_string_tolower_ex(zend_string *str, boo
 
 	while (p < end) {
 		if (*p != zend_tolower_ascii(*p)) {
-			zend_string *res = zend_string_alloc(length, persistent);
+			zend_string *res = zend_string_falloc(length, persistent, fallible);
+			if (ZEND_CONST_COND(fallible, true) && UNEXPECTED(!res)) {
+				return NULL;
+			}
 			memcpy(ZSTR_VAL(res), ZSTR_VAL(str), p - (unsigned char*) ZSTR_VAL(str));
 
 			unsigned char *q = (unsigned char*) ZSTR_VAL(res) + (p - (unsigned char*) ZSTR_VAL(str));
@@ -3112,7 +3123,17 @@ ZEND_API zend_string* ZEND_FASTCALL zend_string_tolower_ex(zend_string *str, boo
 
 	return zend_string_copy(str);
 }
+
+ZEND_API zend_string* ZEND_FASTCALL zend_string_tolower_ex(zend_string *str, bool persistent) /* {{{ */
+{
+	return _zend_string_ftolower_ex(str, persistent, /* fallible */ false);
+}
 /* }}} */
+
+ZEND_API zend_string* ZEND_FASTCALL zend_string_ftolower_ex(zend_string *str, bool persistent)
+{
+	return _zend_string_ftolower_ex(str, persistent, /* fallible */ true);
+}
 
 ZEND_API zend_string* ZEND_FASTCALL zend_string_toupper_ex(zend_string *str, bool persistent) /* {{{ */
 {
@@ -3249,8 +3270,8 @@ ZEND_API int ZEND_FASTCALL zend_binary_strcasecmp_l(const char *s1, size_t len1,
 
 	len = MIN(len1, len2);
 	while (len--) {
-		c1 = zend_tolower((int)*(unsigned char *)s1++);
-		c2 = zend_tolower((int)*(unsigned char *)s2++);
+		c1 = zend_tolower((unsigned char)*(s1++));
+		c2 = zend_tolower((unsigned char)*(s2++));
 		if (c1 != c2) {
 			return c1 - c2;
 		}
@@ -3270,8 +3291,8 @@ ZEND_API int ZEND_FASTCALL zend_binary_strncasecmp_l(const char *s1, size_t len1
 	}
 	len = MIN(length, MIN(len1, len2));
 	while (len--) {
-		c1 = zend_tolower((int)*(unsigned char *)s1++);
-		c2 = zend_tolower((int)*(unsigned char *)s2++);
+		c1 = zend_tolower((unsigned char)*(s1++));
+		c2 = zend_tolower((unsigned char)*(s2++));
 		if (c1 != c2) {
 			return c1 - c2;
 		}
@@ -3400,7 +3421,19 @@ static int hash_zval_compare_function(zval *z1, zval *z2) /* {{{ */
 
 ZEND_API int ZEND_FASTCALL zend_compare_symbol_tables(HashTable *ht1, HashTable *ht2) /* {{{ */
 {
-	return ht1 == ht2 ? 0 : zend_hash_compare(ht1, ht2, (compare_func_t) hash_zval_compare_function, 0);
+	if (ht1 == ht2) {
+		return 0;
+	}
+
+	GC_TRY_ADDREF(ht1);
+	GC_TRY_ADDREF(ht2);
+
+	int ret = zend_hash_compare(ht1, ht2, (compare_func_t) hash_zval_compare_function, 0);
+
+	GC_TRY_DTOR_NO_REF(ht1);
+	GC_TRY_DTOR_NO_REF(ht2);
+
+	return ret;
 }
 /* }}} */
 

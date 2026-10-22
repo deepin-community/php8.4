@@ -16,6 +16,7 @@
   +----------------------------------------------------------------------+
 */
 
+#include <limits.h>
 #include <time.h>
 
 #include "php_soap.h"
@@ -374,6 +375,7 @@ static bool soap_check_xml_ref(zval *data, xmlNodePtr node)
 static void soap_add_xml_ref(zval *data, xmlNodePtr node)
 {
 	if (SOAP_GLOBAL(ref_map)) {
+		Z_TRY_ADDREF_P(data);
 		zend_hash_index_update(SOAP_GLOBAL(ref_map), (zend_ulong)node, data);
 	}
 }
@@ -560,7 +562,12 @@ static zval *master_to_zval_int(zval *ret, encodePtr encode, xmlNodePtr data)
 		}
 	}
 	if (encode->to_zval) {
+		if (SOAP_GLOBAL(decode_depth) >= SOAP_MAX_DECODE_DEPTH) {
+			soap_error0(E_ERROR, "Encoding: Nesting level too deep");
+		}
+		SOAP_GLOBAL(decode_depth)++;
 		ret = encode->to_zval(ret, &encode->details, data);
+		SOAP_GLOBAL(decode_depth)--;
 	}
 	return ret;
 }
@@ -994,7 +1001,7 @@ static xmlNodePtr to_xml_hexbin(encodeTypePtr type, zval *data, int style, xmlNo
 		ZVAL_STR(&tmp, get_serialization_string_from_zval(data));
 		data = &tmp;
 	}
-	str = (unsigned char *) safe_emalloc(Z_STRLEN_P(data) * 2, sizeof(char), 1);
+	str = (unsigned char *) safe_emalloc(Z_STRLEN_P(data), 2, 1);
 
 	for (i = j = 0; i < Z_STRLEN_P(data); i++) {
 		str[j++] = hexconvtab[((unsigned char)Z_STRVAL_P(data)[i]) >> 4];
@@ -1949,6 +1956,11 @@ static xmlNodePtr to_xml_object(encodeTypePtr type, zval *data, int style, xmlNo
 				sdlAttributePtr attr;
 				zval *zattr, rv;
 
+				/* Attributes can't refer to other attributes as there's nothing to attach the href to. */
+				HashTable **ref_map = &SOAP_GLOBAL(ref_map);
+				HashTable *old_ref_map = *ref_map;
+				*ref_map = NULL;
+
 				ZEND_HASH_FOREACH_PTR(sdlType->attributes, attr) {
 					if (attr->name) {
 						zattr = get_zval_property(data, attr->name, &rv);
@@ -1978,6 +1990,8 @@ static xmlNodePtr to_xml_object(encodeTypePtr type, zval *data, int style, xmlNo
 						}
 					}
 				} ZEND_HASH_FOREACH_END();
+
+				*ref_map = old_ref_map;
 			}
 		}
 		if (style == SOAP_ENCODED) {
@@ -2067,6 +2081,15 @@ static int calc_dimension_12(const char* str)
 	return i;
 }
 
+static void soap_array_position_add_digit(int *position, int digit)
+{
+	if (*position > (INT_MAX - digit) / 10) {
+		soap_error0(E_ERROR, "Encoding: array index out of range");
+	}
+
+	*position = (*position * 10) + digit;
+}
+
 static int* get_position_12(int dimension, const char* str)
 {
 	int *pos;
@@ -2087,7 +2110,7 @@ static int* get_position_12(int dimension, const char* str)
 				i++;
 				flag = 1;
 			}
-			pos[i] = (pos[i]*10)+(*str-'0');
+			soap_array_position_add_digit(&pos[i], *str - '0');
 		} else if (*str == '*') {
 			soap_error0(E_ERROR, "Encoding: '*' may only be first arraySize value in list");
 		} else {
@@ -2117,7 +2140,7 @@ static void get_position_ex(int dimension, const char* str, int** pos)
 	memset(*pos,0,sizeof(int)*dimension);
 	while (*str != ']' && *str != '\0' && i < dimension) {
 		if (*str >= '0' && *str <= '9') {
-			(*pos)[i] = ((*pos)[i]*10)+(*str-'0');
+			soap_array_position_add_digit(&(*pos)[i], *str - '0');
 		} else if (*str == ',') {
 			i++;
 		}
@@ -2294,13 +2317,15 @@ static xmlNodePtr to_xml_array(encodeTypePtr type, zval *data, int style, xmlNod
 				if (EG(exception)) {
 					goto iterator_done;
 				}
-				array_set_zval_key(Z_ARRVAL(array_copy), &key, val);
-				zval_ptr_dtor(val);
+				zend_result status = array_set_zval_key(Z_ARRVAL(array_copy), &key, val);
 				zval_ptr_dtor(&key);
+				if (status == FAILURE) {
+					goto iterator_done;
+				}
 			} else {
+				Z_TRY_ADDREF_P(val);
 				add_next_index_zval(&array_copy, val);
 			}
-			Z_TRY_ADDREF_P(val);
 
 			iter->funcs->move_forward(iter);
 			if (EG(exception)) {
@@ -2527,19 +2552,20 @@ static zval *to_zval_array(zval *ret, encodeTypePtr type, xmlNodePtr data)
 		xmlNsPtr nsptr;
 
 		parse_namespace(attr->children->content, &type, &ns);
+		char *type_dup = estrdup(type);
 		nsptr = xmlSearchNs(attr->doc, attr->parent, BAD_CAST(ns));
 
-		end = strrchr(type,'[');
+		end = strrchr(type_dup,'[');
 		if (end) {
 			*end = '\0';
 			dimension = calc_dimension(end+1);
 			dims = get_position(dimension, end+1);
 		}
 		if (nsptr != NULL) {
-			enc = get_encoder(SOAP_GLOBAL(sdl), (char*)nsptr->href, type);
+			enc = get_encoder(SOAP_GLOBAL(sdl), (char*)nsptr->href, type_dup);
 		}
 		if (ns) {efree(ns);}
-
+		if (type_dup) efree(type_dup);
 	} else if ((attr = get_attribute(data->properties,"itemType")) &&
 	    attr->children &&
 	    attr->children->content) {
@@ -2683,27 +2709,38 @@ static zval *to_zval_array(zval *ret, encodeTypePtr type, xmlNodePtr data)
 					ar = zend_hash_index_update(Z_ARRVAL_P(ar), pos[i], &tmpAr);
 				}
 				i++;
+				if (ZEND_HAS_OOM()) {
+					zval_ptr_dtor(ret);
+					ZVAL_NULL(ret);
+					goto ret;
+				}
 			}
 			zend_hash_index_update(Z_ARRVAL_P(ar), pos[i], &tmpVal);
 
 			/* Increment position */
 			i = dimension;
 			while (i > 0) {
-			  i--;
-			  pos[i]++;
-				if (pos[i] >= dims[i]) {
-					if (i > 0) {
-						pos[i] = 0;
-					} else {
-						/* TODO: Array index overflow */
-					}
-				} else {
-				  break;
+				i--;
+				if (pos[i] == INT_MAX) {
+					efree(dims);
+					efree(pos);
+					zval_ptr_dtor(ret);
+					ZVAL_UNDEF(ret);
+					soap_error0(E_ERROR, "Encoding: array index out of range");
+				}
+				pos[i]++;
+				if (pos[i] < dims[i]) {
+					break;
+				}
+				if (i > 0) {
+					pos[i] = 0;
 				}
 			}
 		}
 		trav = trav->next;
 	}
+
+ret:;
 	efree(dims);
 	efree(pos);
 	return ret;
@@ -2788,7 +2825,7 @@ static zval *to_zval_map(zval *ret, encodeTypePtr type, xmlNodePtr data)
 			}
 
 			xmlValue = get_node(item->children, "value");
-			if (!xmlKey) {
+			if (!xmlValue) {
 				soap_error0(E_ERROR,  "Encoding: Can't decode apache map, missing value");
 			}
 
@@ -3060,6 +3097,12 @@ static xmlNodePtr to_xml_list(encodeTypePtr enc, zval *data, int style, xmlNodeP
 	ret = xmlNewNode(NULL, BAD_CAST("BOGUS"));
 	xmlAddChild(parent, ret);
 	FIND_ZVAL_NULL(data, ret, style);
+
+	/* Literals are unique and can't refer to other references via attributes. */
+	HashTable **ref_map = &SOAP_GLOBAL(ref_map);
+	HashTable *old_ref_map = *ref_map;
+	*ref_map = NULL;
+
 	if (Z_TYPE_P(data) == IS_ARRAY) {
 		zval *tmp;
 		smart_str list = {0};
@@ -3134,6 +3177,7 @@ static xmlNodePtr to_xml_list(encodeTypePtr enc, zval *data, int style, xmlNodeP
 			zval_ptr_dtor_str(&tmp);
 		}
 	}
+	*ref_map = old_ref_map;
 	return ret;
 }
 
@@ -3520,18 +3564,20 @@ void encode_reset_ns(void)
 {
 	SOAP_GLOBAL(cur_uniq_ns) = 0;
 	SOAP_GLOBAL(cur_uniq_ref) = 0;
+	SOAP_GLOBAL(decode_depth) = 0;
 	if (SOAP_GLOBAL(ref_map)) {
 		zend_hash_destroy(SOAP_GLOBAL(ref_map));
 	} else {
 		SOAP_GLOBAL(ref_map) = emalloc(sizeof(HashTable));
 	}
-	zend_hash_init(SOAP_GLOBAL(ref_map), 0, NULL, NULL, 0);
+	zend_hash_init(SOAP_GLOBAL(ref_map), 0, NULL, ZVAL_PTR_DTOR, 0);
 }
 
 void encode_finish(void)
 {
 	SOAP_GLOBAL(cur_uniq_ns) = 0;
 	SOAP_GLOBAL(cur_uniq_ref) = 0;
+	SOAP_GLOBAL(decode_depth) = 0;
 	if (SOAP_GLOBAL(ref_map)) {
 		zend_hash_destroy(SOAP_GLOBAL(ref_map));
 		efree(SOAP_GLOBAL(ref_map));
@@ -3596,6 +3642,11 @@ static encodePtr get_array_type(xmlNodePtr node, zval *array, smart_str *type)
 				soap_error0(E_ERROR,  "Encoding: SoapVar has no 'enc_type' property");
 			}
 			cur_type = Z_LVAL_P(ztype);
+			if (cur_type == UNKNOWN_TYPE) {
+				/* Mimic guess_xml_convert() where we use the type of the data.
+				 * UNDEFs are handled transparently as it will error out upon encoding the data. */
+				cur_type = Z_TYPE_P(Z_VAR_ENC_VALUE_P(tmp));
+			}
 
 			zval *zstype = Z_VAR_ENC_STYPE_P(tmp);
 			if (Z_TYPE_P(zstype) == IS_STRING) {

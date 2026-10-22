@@ -591,7 +591,7 @@ static int sapi_lsapi_activate(void)
 static sapi_module_struct lsapi_sapi_module =
 {
     "litespeed",
-    "LiteSpeed V8.2",
+    "LiteSpeed V8.3",
 
     php_lsapi_startup,              /* startup */
     php_module_shutdown_wrapper,    /* shutdown */
@@ -1443,7 +1443,7 @@ void setArgv0( int argc, char * argv[] )
 #include <fcntl.h>
 int main( int argc, char * argv[] )
 {
-    int ret;
+    int ret = 0;
     int bindFd;
 
     char * php_ini_path = NULL;
@@ -1693,12 +1693,12 @@ PHP_FUNCTION(litespeed_response_headers)
             len = p - h->header;
             if (p && len > 0 && len < LSAPI_RESP_HTTP_HEADER_MAX) {
                 memmove( headerBuf, h->header, len );
-                while( len > 0 && (isspace( headerBuf[len-1])) ) {
+                while( len > 0 && (isspace((unsigned char)headerBuf[len - 1])) ) {
                     --len;
                 }
                 headerBuf[len] = 0;
                 if ( len ) {
-                    while( isspace(*++p));
+                    while(isspace((unsigned char)*++p));
                     add_assoc_string_ex(return_value, headerBuf, len, p);
                 }
             }

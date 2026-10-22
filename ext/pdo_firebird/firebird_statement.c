@@ -243,7 +243,7 @@ static int pdo_firebird_stmt_execute(pdo_stmt_t *stmt) /* {{{ */
 					if (result_size > sizeof(result)) {
 						goto error;
 					}
-					while (result[i] != isc_info_end && i < result_size) {
+					while (i < result_size && result[i] != isc_info_end) {
 						short len = (short) isc_vax_integer(&result[i + 1], 2);
 						if (len != 1 && len != 2 && len != 4) {
 							goto error;
@@ -446,6 +446,8 @@ static int php_firebird_fetch_blob(pdo_stmt_t *stmt, int colno, zval *result, IS
 			php_firebird_error_stmt_with_info(stmt, "HY000", strlen("HY000"), msg, strlen(msg));
 			goto fetch_blob_end;
 		}
+	} else {
+		ZVAL_EMPTY_STRING(result);
 	}
 	retval = 1;
 

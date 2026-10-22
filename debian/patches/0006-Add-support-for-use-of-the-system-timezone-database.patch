@@ -44,7 +44,7 @@ r1: initial revision
  2 files changed, 545 insertions(+), 3 deletions(-)
 
 diff --git a/ext/date/config0.m4 b/ext/date/config0.m4
-index 5af6be1..bac3004 100644
+index 9bd80e4..7d111f0 100644
 --- a/ext/date/config0.m4
 +++ b/ext/date/config0.m4
 @@ -4,6 +4,19 @@ AC_CHECK_HEADERS([io.h])

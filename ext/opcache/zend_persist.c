@@ -314,31 +314,78 @@ static HashTable *zend_persist_attributes(HashTable *attributes)
 	return ptr;
 }
 
-uint32_t zend_accel_get_class_name_map_ptr(zend_string *type_name)
+/* We delay the publishing of CE cache slots until after ZCSG(map_ptr_last) is
+ * published.
+ * CE cache slots stored in interned strings are immediately visible to other
+ * processes, so if we fail to update ZCSG(map_ptr_last) after publishing a
+ * slot (due to a bailout/exit), that slot may be re-allocated for something
+ * else by other processes. */
+void zend_accel_pending_ce_cache_begin(void)
+{
+	ZEND_ASSERT(ZCG(locked));
+
+	/* A persist window left through a bailout caught by the caller (e.g.
+	 * opcache_compile_file()) never published its slots. Drop them. */
+	zend_accel_pending_ce_cache_discard();
+
+	ZCG(pending_ce_cache) = emalloc(sizeof(HashTable));
+	zend_hash_init(ZCG(pending_ce_cache), 8, NULL, NULL, 0);
+}
+
+void zend_accel_pending_ce_cache_commit(void)
+{
+	ZEND_ASSERT(ZCG(pending_ce_cache));
+	/* Every pending slot must be covered by ZCSG(map_ptr_last) */
+	ZEND_ASSERT(ZCSG(map_ptr_last) == CG(map_ptr_last));
+
+	ZEND_HASH_FOREACH_NUM_KEY_VAL(ZCG(pending_ce_cache), zend_ulong h, zval *zv) {
+		zend_string *type_name = (zend_string*)(uintptr_t)h;
+
+		ZEND_ASSERT(!ZSTR_HAS_CE_CACHE(type_name));
+		GC_SET_REFCOUNT(type_name, (uint32_t)Z_LVAL_P(zv));
+		GC_ADD_FLAGS(type_name, IS_STR_CLASS_NAME_MAP_PTR);
+	} ZEND_HASH_FOREACH_END();
+
+	zend_accel_pending_ce_cache_discard();
+}
+
+void zend_accel_pending_ce_cache_discard(void)
+{
+	if (ZCG(pending_ce_cache)) {
+		zend_hash_destroy(ZCG(pending_ce_cache));
+		efree(ZCG(pending_ce_cache));
+		ZCG(pending_ce_cache) = NULL;
+	}
+}
+
+void zend_accel_get_class_name_map_ptr(zend_string *type_name)
 {
 	uint32_t ret;
+	zval *slot;
 
 	if (zend_string_equals_literal_ci(type_name, "self") ||
 			zend_string_equals_literal_ci(type_name, "parent")) {
-		return 0;
+		return;
 	}
 
 	/* We use type.name.gc.refcount to keep map_ptr of corresponding type */
 	if (ZSTR_HAS_CE_CACHE(type_name)) {
-		return GC_REFCOUNT(type_name);
+		return;
 	}
 
 	if ((GC_FLAGS(type_name) & GC_IMMUTABLE)
 	 && (GC_FLAGS(type_name) & IS_STR_PERMANENT)) {
+		ZEND_ASSERT(ZCG(pending_ce_cache) && "Must be called inside a persist window");
+		slot = zend_hash_index_lookup(ZCG(pending_ce_cache), (zend_ulong)(uintptr_t)type_name);
+		if (Z_TYPE_P(slot) != IS_NULL) {
+			/* Already allocated earlier in this window */
+			return;
+		}
 		do {
 			ret = ZEND_MAP_PTR_NEW_OFFSET();
 		} while (ret <= 2);
-		GC_SET_REFCOUNT(type_name, ret);
-		GC_ADD_FLAGS(type_name, IS_STR_CLASS_NAME_MAP_PTR);
-		return ret;
+		ZVAL_LONG(slot, ret);
 	}
-
-	return 0;
 }
 
 static void zend_persist_type(zend_type *type) {
@@ -525,9 +572,8 @@ static void zend_persist_op_array_ex(zend_op_array *op_array, zend_persistent_sc
 		zend_op *new_opcodes = zend_shared_memdup_put(op_array->opcodes, sizeof(zend_op) * op_array->last);
 		zend_op *opline = new_opcodes;
 		zend_op *end = new_opcodes + op_array->last;
-		int offset = 0;
 
-		for (; opline < end ; opline++, offset++) {
+		for (; opline < end ; opline++) {
 #if ZEND_USE_ABS_CONST_ADDR
 			if (opline->op1_type == IS_CONST) {
 				opline->op1.zv = (zval*)((char*)opline->op1.zv + ((char*)op_array->literals - (char*)orig_literals));
@@ -1262,6 +1308,41 @@ void zend_update_parent_ce(zend_class_entry *ce)
 	}
 }
 
+#ifdef HAVE_JIT
+static void zend_accel_persist_jit_op_array(zend_op_array *op_array, zend_class_entry *ce)
+{
+	if (op_array->type == ZEND_USER_FUNCTION) {
+		if (op_array->scope == ce
+		 && !(op_array->fn_flags & ZEND_ACC_ABSTRACT)
+		 && !(op_array->fn_flags & ZEND_ACC_TRAIT_CLONE)) {
+			zend_jit_op_array(op_array, ZCG(current_persistent_script) ? &ZCG(current_persistent_script)->script : NULL);
+			for (uint32_t i = 0; i < op_array->num_dynamic_func_defs; i++) {
+				zend_jit_op_array(op_array->dynamic_func_defs[i], ZCG(current_persistent_script) ? &ZCG(current_persistent_script)->script : NULL);
+			}
+		}
+	}
+}
+
+static void zend_accel_persist_link_func_info(zend_op_array *op_array, zend_class_entry *ce)
+{
+	if (op_array->type == ZEND_USER_FUNCTION
+	 && !(op_array->fn_flags & ZEND_ACC_ABSTRACT)) {
+		if ((op_array->scope != ce
+		 || (op_array->fn_flags & ZEND_ACC_TRAIT_CLONE))
+		  && (JIT_G(trigger) == ZEND_JIT_ON_FIRST_EXEC
+		  || JIT_G(trigger) == ZEND_JIT_ON_PROF_REQUEST
+		  || JIT_G(trigger) == ZEND_JIT_ON_HOT_COUNTERS
+		  || JIT_G(trigger) == ZEND_JIT_ON_HOT_TRACE)) {
+			void *jit_extension = zend_shared_alloc_get_xlat_entry(op_array->opcodes);
+
+			if (jit_extension) {
+				ZEND_SET_FUNC_INFO(op_array, jit_extension);
+			}
+		}
+	}
+}
+#endif
+
 static void zend_accel_persist_class_table(HashTable *class_table)
 {
 	Bucket *p;
@@ -1288,44 +1369,48 @@ static void zend_accel_persist_class_table(HashTable *class_table)
 	if (JIT_G(on) && JIT_G(opt_level) <= ZEND_JIT_LEVEL_OPT_FUNCS &&
 	    !ZCG(current_persistent_script)->corrupted) {
 	    zend_op_array *op_array;
+		zend_property_info *prop;
 
 	    ZEND_HASH_MAP_FOREACH_BUCKET(class_table, p) {
 			if (EXPECTED(Z_TYPE(p->val) != IS_ALIAS_PTR)) {
 				ce = Z_PTR(p->val);
 				ZEND_HASH_MAP_FOREACH_PTR(&ce->function_table, op_array) {
-					if (op_array->type == ZEND_USER_FUNCTION) {
-						if (op_array->scope == ce
-						 && !(op_array->fn_flags & ZEND_ACC_ABSTRACT)
-						 && !(op_array->fn_flags & ZEND_ACC_TRAIT_CLONE)) {
-							zend_jit_op_array(op_array, ZCG(current_persistent_script) ? &ZCG(current_persistent_script)->script : NULL);
-							for (uint32_t i = 0; i < op_array->num_dynamic_func_defs; i++) {
-								zend_jit_op_array(op_array->dynamic_func_defs[i], ZCG(current_persistent_script) ? &ZCG(current_persistent_script)->script : NULL);
+					zend_accel_persist_jit_op_array(op_array, ce);
+				} ZEND_HASH_FOREACH_END();
+
+				if (ce->num_hooked_props > 0) {
+					ZEND_HASH_MAP_FOREACH_PTR(&ce->properties_info, prop) {
+						if (prop->hooks) {
+							for (uint32_t i = 0; i < ZEND_PROPERTY_HOOK_COUNT; i++) {
+								if (prop->hooks[i]) {
+									op_array = &prop->hooks[i]->op_array;
+									zend_accel_persist_jit_op_array(op_array, ce);
+								}
 							}
 						}
-					}
-				} ZEND_HASH_FOREACH_END();
+					} ZEND_HASH_FOREACH_END();
+				}
 			}
 		} ZEND_HASH_FOREACH_END();
 	    ZEND_HASH_MAP_FOREACH_BUCKET(class_table, p) {
 			if (EXPECTED(Z_TYPE(p->val) != IS_ALIAS_PTR)) {
 				ce = Z_PTR(p->val);
 				ZEND_HASH_MAP_FOREACH_PTR(&ce->function_table, op_array) {
-					if (op_array->type == ZEND_USER_FUNCTION
-					 && !(op_array->fn_flags & ZEND_ACC_ABSTRACT)) {
-						if ((op_array->scope != ce
-						 || (op_array->fn_flags & ZEND_ACC_TRAIT_CLONE))
-						  && (JIT_G(trigger) == ZEND_JIT_ON_FIRST_EXEC
-						   || JIT_G(trigger) == ZEND_JIT_ON_PROF_REQUEST
-						   || JIT_G(trigger) == ZEND_JIT_ON_HOT_COUNTERS
-						   || JIT_G(trigger) == ZEND_JIT_ON_HOT_TRACE)) {
-							void *jit_extension = zend_shared_alloc_get_xlat_entry(op_array->opcodes);
+					zend_accel_persist_link_func_info(op_array, ce);
+				} ZEND_HASH_FOREACH_END();
 
-							if (jit_extension) {
-								ZEND_SET_FUNC_INFO(op_array, jit_extension);
+				if (ce->num_hooked_props > 0) {
+					ZEND_HASH_MAP_FOREACH_PTR(&ce->properties_info, prop) {
+						if (prop->hooks) {
+							for (uint32_t i = 0; i < ZEND_PROPERTY_HOOK_COUNT; i++) {
+								if (prop->hooks[i]) {
+									op_array = &prop->hooks[i]->op_array;
+									zend_accel_persist_link_func_info(op_array, ce);
+								}
 							}
 						}
-					}
-				} ZEND_HASH_FOREACH_END();
+					} ZEND_HASH_FOREACH_END();
+				}
 			}
 		} ZEND_HASH_FOREACH_END();
 	}
@@ -1391,6 +1476,9 @@ zend_persistent_script *zend_accel_script_persist(zend_persistent_script *script
 #endif
 
 	zend_map_ptr_extend(ZCSG(map_ptr_last));
+	if (for_shm) {
+		zend_accel_pending_ce_cache_begin();
+	}
 
 	zend_accel_persist_class_table(&script->script.class_table);
 	zend_hash_persist(&script->script.function_table);
@@ -1418,6 +1506,7 @@ zend_persistent_script *zend_accel_script_persist(zend_persistent_script *script
 	if (for_shm) {
 		ZCSG(map_ptr_last) = CG(map_ptr_last);
 		ZCSG(map_ptr_static_last) = zend_map_ptr_static_last;
+		zend_accel_pending_ce_cache_commit();
 	}
 
 #ifdef HAVE_JIT

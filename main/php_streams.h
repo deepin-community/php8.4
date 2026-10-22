@@ -219,6 +219,9 @@ struct _php_stream  {
 	/* whether stdio cast flushing is in progress */
 	uint16_t fclose_stdiocast_flush_in_progress:1;
 
+	/* whether fatal error happened and all operations should terminates as soon as possible */
+	uint16_t fatal_error:1;
+
 	char mode[16];			/* "rwb" etc. ala stdio */
 
 	uint32_t flags;	/* PHP_STREAM_FLAG_XXX */
@@ -583,7 +586,7 @@ END_EXTERN_C()
 int php_init_stream_wrappers(int module_number);
 void php_shutdown_stream_wrappers(int module_number);
 void php_shutdown_stream_hashes(void);
-PHP_RSHUTDOWN_FUNCTION(streams);
+ZEND_MODULE_POST_ZEND_DEACTIVATE_D(streams);
 
 BEGIN_EXTERN_C()
 PHPAPI zend_result php_register_url_stream_wrapper(const char *protocol, const php_stream_wrapper *wrapper);

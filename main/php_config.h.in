@@ -1184,9 +1184,17 @@
 /* Define to 1 if the PHP extension 'posix' is available. */
 #undef HAVE_POSIX
 
+/* Define to 1 if you have the 'posix_spawn_file_actions_addchdir' function.
+   */
+#undef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR
+
 /* Define to 1 if you have the 'posix_spawn_file_actions_addchdir_np'
    function. */
 #undef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP
+
+/* Define to 1 if libpq has the 'PQclosePortal' function (PostgreSQL 17 or
+   later). */
+#undef HAVE_PQCLOSEPORTAL
 
 /* Define to 1 if libpq has the 'PQclosePrepared' function (PostgreSQL 17 or
    later). */
@@ -1650,7 +1658,7 @@
 /* Define to 1 if you have the <tidybuffio.h> header file. */
 #undef HAVE_TIDYBUFFIO_H
 
-/* Define to 1 if Tidy library has the 'tidyOptGetCategory' function. */
+/* Define to 1 if tidyOptGetCategory is available. */
 #undef HAVE_TIDYOPTGETCATEGORY
 
 /* Define to 1 if Tidy library has the 'tidyOptGetDoc' function. */
@@ -2080,6 +2088,10 @@
 /* Enable extensions on AIX, Interix, z/OS.  */
 #ifndef _ALL_SOURCE
 # undef _ALL_SOURCE
+#endif
+/* Enable extensions on Cosmopolitan Libc. */
+#ifndef _COSMO_SOURCE
+# undef _COSMO_SOURCE
 #endif
 /* Enable general extensions on macOS.  */
 #ifndef _DARWIN_C_SOURCE

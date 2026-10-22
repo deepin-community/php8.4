@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2023 Alexander Borisov
+ * Copyright (C) 2018-2025 Alexander Borisov
  *
  * Author: Alexander Borisov <borisov@lexbor.com>
  */
@@ -26,7 +26,7 @@ extern "C" {
 #include "lexbor/core/types.h"
 #include "lexbor/core/lexbor.h"
 
-#define LEXBOR_VERSION_MAJOR 1
+#define LEXBOR_VERSION_MAJOR 2
 #define LEXBOR_VERSION_MINOR 7
 #define LEXBOR_VERSION_PATCH 0
 
@@ -39,6 +39,10 @@ extern "C" {
 #define lexbor_max(val1, val2) ((val1) > (val2) ? (val1) : (val2))
 #define lexbor_min(val1, val2) ((val1) < (val2) ? (val1) : (val2))
 
+#define LEXBOR_STR_RES_MAP_CHAR_OTHER      0x00
+#define LEXBOR_STR_RES_MAP_CHAR_A_Z_a_z    0x01
+#define LEXBOR_STR_RES_MAP_CHAR_WHITESPACE 0x02
+#define LEXBOR_STR_RES_SLIP                0xFF
 
 /*
  * Very important!!!

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2020 Alexander Borisov
+ * Copyright (C) 2018-2026 Alexander Borisov
  *
  * Author: Alexander Borisov <borisov@lexbor.com>
  */
@@ -8,16 +8,16 @@
 #include "lexbor/html/tokenizer/state_comment.h"
 #include "lexbor/html/tokenizer/state_doctype.h"
 
-#define LEXBOR_STR_RES_ANSI_REPLACEMENT_CHARACTER
-#define LEXBOR_STR_RES_ALPHANUMERIC_CHARACTER
-#define LEXBOR_STR_RES_REPLACEMENT_CHARACTER
-#define LEXBOR_STR_RES_ALPHA_CHARACTER
-#define LEXBOR_STR_RES_MAP_HEX
-#define LEXBOR_STR_RES_MAP_NUM
-#include "lexbor/core/str_res.h"
-#include "lexbor/core/swar.h"
+#ifndef LEXBOR_DISABLE_INTERNAL_EXTERN
+    LXB_EXTERN const lxb_char_t lexbor_str_res_map_num[256];
+    LXB_EXTERN const lxb_char_t lexbor_str_res_map_hex[256];
+    LXB_EXTERN const lxb_char_t lexbor_str_res_ansi_replacement_character[4];
+    LXB_EXTERN const size_t     lexbor_str_res_alphanumeric_character[256];
+    LXB_EXTERN const size_t     lexbor_str_res_alpha_character[256];
+    LXB_EXTERN const size_t     lexbor_str_res_replacement_character[160];
+#endif
 
-#define LXB_HTML_TOKENIZER_RES_ENTITIES_SBST
+#include "lexbor/core/swar.h"
 #include "lexbor/html/tokenizer/res.h"
 
 
@@ -123,11 +123,6 @@ lxb_html_tokenizer_state_markup_declaration_cdata(lxb_html_tokenizer_t *tkz,
                                                   const lxb_char_t *end);
 
 /* CDATA Section */
-static const lxb_char_t *
-lxb_html_tokenizer_state_cdata_section_before(lxb_html_tokenizer_t *tkz,
-                                              const lxb_char_t *data,
-                                              const lxb_char_t *end);
-
 static const lxb_char_t *
 lxb_html_tokenizer_state_cdata_section(lxb_html_tokenizer_t *tkz,
                                        const lxb_char_t *data,
@@ -279,10 +274,10 @@ lxb_html_tokenizer_state_data(lxb_html_tokenizer_t *tkz,
                 if (tkz->is_eof) {
                     /* Emit TEXT node if not empty */
                     if (tkz->token->begin != NULL) {
-                        lxb_html_tokenizer_state_token_set_end_oef(tkz);
+                        lxb_html_tokenizer_state_token_set_end_eof(tkz);
                     }
 
-                    if (tkz->token->begin != tkz->token->end) {
+                    if (tkz->pos != tkz->start) {
                         tkz->token->tag_id = LXB_TAG__TEXT;
 
                         lxb_html_tokenizer_state_append_data_m(tkz, data);
@@ -377,11 +372,11 @@ lxb_html_tokenizer_state_plaintext(lxb_html_tokenizer_t *tkz,
 
                 if (tkz->is_eof) {
                     if (tkz->token->begin != NULL) {
-                        lxb_html_tokenizer_state_token_set_end_oef(tkz);
+                        lxb_html_tokenizer_state_token_set_end_eof(tkz);
                     }
 
                     lxb_html_tokenizer_state_set_text(tkz);
-                    lxb_html_tokenizer_state_token_done_m(tkz, end);
+                    lxb_html_tokenizer_state_token_text_done_m(tkz, end);
 
                     return end;
                 }
@@ -453,7 +448,7 @@ lxb_html_tokenizer_state_tag_open(lxb_html_tokenizer_t *tkz,
         if (tkz->is_eof) {
             lxb_html_tokenizer_state_append_m(tkz, "<", 1);
 
-            lxb_html_tokenizer_state_token_set_end_oef(tkz);
+            lxb_html_tokenizer_state_token_set_end_eof(tkz);
             lxb_html_tokenizer_state_token_emit_text_not_empty_m(tkz, end);
 
             lxb_html_tokenizer_error_add(tkz->parse_errors, tkz->token->end,
@@ -508,7 +503,7 @@ lxb_html_tokenizer_state_end_tag_open(lxb_html_tokenizer_t *tkz,
         if (tkz->is_eof) {
             lxb_html_tokenizer_state_append_m(tkz, "</", 2);
 
-            lxb_html_tokenizer_state_token_set_end_oef(tkz);
+            lxb_html_tokenizer_state_token_set_end_eof(tkz);
             lxb_html_tokenizer_state_token_emit_text_not_empty_m(tkz, end);
 
             lxb_html_tokenizer_error_add(tkz->parse_errors, tkz->token->end,
@@ -582,7 +577,7 @@ lxb_html_tokenizer_state_tag_name(lxb_html_tokenizer_t *tkz,
             /* U+0000 NULL */
             case 0x00:
                 if (tkz->is_eof) {
-                    lxb_html_tokenizer_state_token_set_end_oef(tkz);
+                    lxb_html_tokenizer_state_token_set_end_eof(tkz);
 
                     lxb_html_tokenizer_error_add(tkz->parse_errors,
                                                tkz->token->end,
@@ -1377,7 +1372,7 @@ lxb_html_tokenizer_state_bogus_comment(lxb_html_tokenizer_t *tkz,
 
                 if (tkz->is_eof) {
                     if (tkz->token->begin != NULL) {
-                        lxb_html_tokenizer_state_token_set_end_oef(tkz);
+                        lxb_html_tokenizer_state_token_set_end_eof(tkz);
                     }
 
                     lxb_html_tokenizer_state_set_text(tkz);
@@ -1451,8 +1446,8 @@ lxb_html_tokenizer_state_markup_declaration_open(lxb_html_tokenizer_t *tkz,
     else if (*data == 0x5B) {
         if ((end - data) < 7) {
             tkz->markup = (lxb_char_t *) "[CDATA[";
-
             tkz->state = lxb_html_tokenizer_state_markup_declaration_cdata;
+
             return data;
         }
 
@@ -1469,6 +1464,9 @@ lxb_html_tokenizer_state_markup_declaration_open(lxb_html_tokenizer_t *tkz,
                 return data;
             }
 
+            lxb_html_tokenizer_error_add(tkz->parse_errors, data,
+                                         LXB_HTML_TOKENIZER_ERROR_CDINHTCO);
+
             tkz->state = lxb_html_tokenizer_state_bogus_comment_before;
 
             return data;
@@ -1476,7 +1474,7 @@ lxb_html_tokenizer_state_markup_declaration_open(lxb_html_tokenizer_t *tkz,
     }
 
     if (tkz->is_eof) {
-        lxb_html_tokenizer_state_token_set_end_oef(tkz);
+        lxb_html_tokenizer_state_token_set_end_eof(tkz);
 
         tkz->token->begin = tkz->token->end;
     }
@@ -1503,6 +1501,8 @@ lxb_html_tokenizer_state_markup_declaration_comment(lxb_html_tokenizer_t *tkz,
         tkz->state = lxb_html_tokenizer_state_comment_before_start;
         return (data + 1);
     }
+
+    lxb_html_tokenizer_state_append_m(tkz, "-", 1);
 
     lxb_html_tokenizer_error_add(tkz->parse_errors, data,
                                  LXB_HTML_TOKENIZER_ERROR_INOPCO);
@@ -1537,6 +1537,8 @@ lxb_html_tokenizer_state_markup_declaration_doctype(lxb_html_tokenizer_t *tkz,
         tkz->state = lxb_html_tokenizer_state_doctype_before;
         return data;
     }
+
+    lxb_html_tokenizer_state_append_m(tkz, data, (end - data));
 
     tkz->markup = pos;
 
@@ -1575,6 +1577,9 @@ lxb_html_tokenizer_state_markup_declaration_cdata(lxb_html_tokenizer_t *tkz,
 
         lxb_html_tokenizer_state_append_m(tkz, "[CDATA", 6);
 
+        lxb_html_tokenizer_error_add(tkz->parse_errors, data,
+                                     LXB_HTML_TOKENIZER_ERROR_CDINHTCO);
+
         tkz->state = lxb_html_tokenizer_state_bogus_comment_before;
         return data;
     }
@@ -1587,7 +1592,7 @@ lxb_html_tokenizer_state_markup_declaration_cdata(lxb_html_tokenizer_t *tkz,
 /*
  * Helper function. No in the specification. For 12.2.5.69
  */
-static const lxb_char_t *
+const lxb_char_t *
 lxb_html_tokenizer_state_cdata_section_before(lxb_html_tokenizer_t *tkz,
                                               const lxb_char_t *data,
                                               const lxb_char_t *end)
@@ -1657,11 +1662,11 @@ lxb_html_tokenizer_state_cdata_section(lxb_html_tokenizer_t *tkz,
 
                     if (tkz->token->begin != NULL) {
                         lxb_html_tokenizer_state_append_data_m(tkz, data);
-                        lxb_html_tokenizer_state_token_set_end_oef(tkz);
+                        lxb_html_tokenizer_state_token_set_end_eof(tkz);
                     }
 
                     lxb_html_tokenizer_state_set_text(tkz);
-                    lxb_html_tokenizer_state_token_done_m(tkz, end);
+                    lxb_html_tokenizer_state_token_text_done_m(tkz, end);
 
                     return end;
                 }
@@ -1726,7 +1731,7 @@ lxb_html_tokenizer_state_cdata_section_end(lxb_html_tokenizer_t *tkz,
         tkz->state = lxb_html_tokenizer_state_data_before;
 
         lxb_html_tokenizer_state_set_text(tkz);
-        lxb_html_tokenizer_state_token_done_m(tkz, end);
+        lxb_html_tokenizer_state_token_text_done_m(tkz, end);
 
         return (data + 1);
     }
@@ -1857,9 +1862,28 @@ done:
      */
     /* U+003B SEMICOLON character (;) */
     if (tkz->is_attribute && tkz->entity_match->key != 0x3B) {
+        lxb_char_t ch;
+
+        /*
+         * The "next input character" per the spec is the character immediately
+         * after the matched entity, not the character that broke the SBST
+         * lookup.  For example, for "&noti;" the match is "&not"
+         * and the next input character is 'i', not ';'.
+         *
+         * If there are trailing characters in the buffer after the match,
+         * the next input character is the first one after entity_end.
+         * Otherwise it is *data (the character that terminated the SBST).
+         */
+        if (&tkz->start[tkz->entity_end + 1] < tkz->pos) {
+            ch = tkz->start[tkz->entity_end + 1];
+        }
+        else {
+            ch = *data;
+        }
+
         /* U+003D EQUALS SIGN character (=) or ASCII alphanumeric */
-        if (*data == 0x3D
-            || lexbor_str_res_alphanumeric_character[*data] != LEXBOR_STR_RES_SLIP)
+        if (ch == 0x3D
+            || lexbor_str_res_alphanumeric_character[ch] != LEXBOR_STR_RES_SLIP)
         {
             return data;
         }
@@ -1902,16 +1926,30 @@ lxb_html_tokenizer_state_char_ref_ambiguous_ampersand(lxb_html_tokenizer_t *tkz,
                                                       const lxb_char_t *data,
                                                       const lxb_char_t *end)
 {
-    /* ASCII alphanumeric */
-    /* Skipped, not need */
+    const lxb_char_t *begin = data;
 
-    /* U+003B SEMICOLON (;) */
-    if (*data == 0x3B) {
-        lxb_html_tokenizer_error_add(tkz->parse_errors, data,
-                                     LXB_HTML_TOKENIZER_ERROR_UNNACHRE);
+    while (data < end) {
+        /* Not ASCII alphanumeric */
+        if (lexbor_str_res_alphanumeric_character[ *data ] == LEXBOR_STR_RES_SLIP) {
+            lxb_html_tokenizer_state_append_m(tkz, begin, (data - begin));
+
+            /* U+003B SEMICOLON (;) */
+            if (*data == 0x3B) {
+                lxb_html_tokenizer_error_add(tkz->parse_errors, data,
+                                             LXB_HTML_TOKENIZER_ERROR_UNNACHRE);
+            }
+
+            tkz->state = tkz->state_return;
+
+            return data;
+        }
+
+        data += 1;
     }
 
-    tkz->state = tkz->state_return;
+    if (begin < data) {
+        lxb_html_tokenizer_state_append_m(tkz, begin, (data - begin));
+    }
 
     return data;
 }
@@ -2002,6 +2040,10 @@ lxb_html_tokenizer_state_char_ref_hexademical(lxb_html_tokenizer_t *tkz,
             if (*data == ';') {
                 data++;
             }
+            else {
+                lxb_html_tokenizer_error_add(tkz->parse_errors, data,
+                                             LXB_HTML_TOKENIZER_ERROR_MISEAFCHRE);
+            }
 
             return lxb_html_tokenizer_state_char_ref_numeric_end(tkz, data, end);
         }
@@ -2031,6 +2073,10 @@ lxb_html_tokenizer_state_char_ref_decimal(lxb_html_tokenizer_t *tkz,
 
             if (*data == ';') {
                 data++;
+            }
+            else {
+                lxb_html_tokenizer_error_add(tkz->parse_errors, data,
+                                             LXB_HTML_TOKENIZER_ERROR_MISEAFCHRE);
             }
 
             return lxb_html_tokenizer_state_char_ref_numeric_end(tkz, data, end);

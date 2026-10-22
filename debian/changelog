@@ -1,3 +1,94 @@
+php8.4 (8.4.27-1~deb13u1) trixie-security; urgency=high
+
+  * New upstream version 8.4.27
+   + (CVE-2026-109618, CVE-2026-109619): Avoid state corruption via
+     bailout.
+
+ -- Ondřej Surý <ondrej@debian.org>  Wed, 21 Oct 2026 09:53:46 +0200
+
+php8.4 (8.4.26-1~deb13u1) trixie-security; urgency=high
+
+  * New upstream version 8.4.26
+   + [CVE-2026-91768]: IPv6 ACL bypass in FastCGI listen.allowed_clients
+     due to partial address comparison.
+   + [CVE-2025-1218]: Various packet overreads in mysqlnd wire protocol.
+   + [CVE-2026-91769]: TLS hostname verification falls back to CN after
+     SAN mismatch.
+   + [CVE-2026-91767]: Heap buffer overflow in
+     php_openssl_matches_wildcard_name() on crafted server certificate
+     wildcard CN.
+   + [CVE-2026-6103]: Integer overflow in phar_tar_number() allowing TAR
+     archive entry injection.
+   + [CVE-2026-91765]: Unbounded recursion in server-side
+     cleanup_xml_node().
+   + [CVE-2025-14181]: Integer overflow to buffer overflow in SOAP HTTP
+     parsing.
+   + [CVE-2026-93682]: Out-of-bounds read in the HTTP stream wrapper when
+     following a redirect with an empty Location header.
+   + [CVE-2026-92842]: Out-of-bounds read in convert.* stream filters when
+     line-break-chars contains NUL.
+   + [CVE-2026-91766]: Cross-origin credential leak in HTTP stream wrapper
+     redirects.
+   + [CVE-2026-17545]: Reserved device names are not rejected before file
+     and stream I/O.
+
+ -- Ondřej Surý <ondrej@debian.org>  Thu, 24 Sep 2026 19:16:18 +0200
+
+php8.4 (8.4.24-1~deb13u1) trixie-security; urgency=high
+
+  * New upstream version 8.4.24 (Closes: #1143153)
+   + [CVE-2026-17544]: Out-of-bounds write in bccomp()
+   + [CVE-2026-17543]: SQL injection via E'...' backslash breakout
+   + [CVE-2026-7260]: Crash via recursive symlinks
+
+ -- Ondřej Surý <ondrej@debian.org>  Fri, 31 Jul 2026 07:11:11 +0200
+
+php8.4 (8.4.23-1~deb13u1) trixie-security; urgency=high
+
+  * New upstream version 8.4.23
+   + [CVE-2026-14355]: Memory corruption (zend_mm_heap corrupted) in
+     openssl_encrypt with AES-WRAP-PAD.
+
+ -- Ondřej Surý <ondrej@debian.org>  Fri, 03 Jul 2026 14:26:56 +0200
+
+php8.4 (8.4.21-1~deb13u1) trixie-security; urgency=high
+
+  * New upstream version 8.4.21
+   + [CVE-2026-7263]: Dom\XMLDocument::C14N() emits duplicate xmlns
+     declarations after setAttributeNS()
+   + [CVE-2026-29078, CVE-2026-29079]: Upgrade to lexbor v2.7.0
+   + [CVE-2026-6735]: XSS within status endpoint
+   + [CVE-2026-7259]: Null pointer dereference in php_mb_check_encoding()
+     via mb_ereg_search_init()
+   + [CVE-2026-6104]: Out-of-bounds access in mbfl_name2encoding_ex()
+   + [CVE-2025-14179]: SQL injection via NUL bytes in quoted strings
+   + [CVE-2026-6722]: Stale SOAP_GLOBAL(ref_map) pointer with Apache Map
+   + [CVE-2026-7261]: Use-after-free after header parsing failure with
+     SOAP_PERSISTENCE_SESSION
+   + [CVE-2026-7262]: Broken Apache map value NULL check
+   + [CVE-2026-7568]: Signed integer overflow of char array offset
+   + [CVE-2026-7258]: Consistently pass unsigned char to ctype.h functions
+
+ -- Ondřej Surý <ondrej@debian.org>  Fri, 08 May 2026 07:56:48 +0200
+
+php8.4 (8.4.16-1~deb13u1) trixie-security; urgency=high
+
+  * New upstream version 8.4.16
+   + [CVE-2025-14180]: Fixed GHSA-8xr5-qppj-gvwj (PDO quoting result null
+     deref).
+   + [CVE-2025-14178]: Fixed GHSA-h96m-rvf9-jgm2 (Heap buffer overflow in
+     array_merge()).
+   + [CVE-2025-14177]: Fixed GHSA-3237-qqm7-mfv7 (Information Leak of
+     Memory in getimagesize).
+
+ -- Ondřej Surý <ondrej@debian.org>  Thu, 18 Dec 2025 22:19:25 +0100
+
+php8.4 (8.4.11-1) unstable; urgency=medium
+
+  * New upstream version 8.4.11
+
+ -- Ondřej Surý <ondrej@debian.org>  Sun, 03 Aug 2025 09:32:21 +0200
+
 php8.4 (8.4.10-1) unstable; urgency=medium
 
   * Set PHP_BUILD_PROVIDER to Debian with option to override this from
